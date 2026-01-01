@@ -3,6 +3,7 @@ from typing import Optional, Dict, List
 from supabase import create_client, Client
 from app.config import settings
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,10 @@ async def get_managed_stocks() -> List[str]:
         symbols = [row["symbol"].upper() for row in response.data]
         logger.info(f"활성화된 종목 {len(symbols)}개 조회: {symbols}")
         return symbols
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON 디코드 오류 (managed_stocks): {str(e)}", exc_info=True)
+        logger.error(f"응답 내용: {getattr(response, 'text', 'N/A') if 'response' in locals() else 'N/A'}")
+        raise
     except Exception as e:
         logger.error(f"managed_stocks 조회 실패: {str(e)}", exc_info=True)
         raise
@@ -81,6 +86,10 @@ async def get_today_stock_prices(symbols: List[str]) -> Dict[str, dict]:
             }
 
         logger.info(f"오늘 날짜 데이터 {len(result)}개 조회 완료")
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON 디코드 오류 (get_today_stock_prices): {str(e)}", exc_info=True)
+        logger.error(f"응답 내용: {getattr(response, 'text', 'N/A') if 'response' in locals() else 'N/A'}")
+        # 에러가 발생해도 빈 딕셔너리 반환하여 계속 진행
     except Exception as e:
         logger.error(f"stock_prices 조회 실패: {str(e)}", exc_info=True)
         # 에러가 발생해도 빈 딕셔너리 반환하여 계속 진행
@@ -143,6 +152,10 @@ async def get_stock_price_from_db(symbol: str) -> Optional[dict]:
             }
 
         return None
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON 디코드 오류 ({symbol}): {str(e)}", exc_info=True)
+        logger.error(f"응답 내용: {getattr(response, 'text', 'N/A') if 'response' in locals() else 'N/A'}")
+        return None
     except Exception as e:
         logger.error(f"{symbol} 조회 실패: {str(e)}", exc_info=True)
         return None
@@ -180,6 +193,11 @@ async def save_stock_price_to_db(
         else:
             logger.warning(f"{symbol} 저장 실패: 응답 데이터 없음")
             return False
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON 디코드 오류 ({symbol} 저장): {str(e)}", exc_info=True)
+        logger.error(f"응답 내용: {getattr(response, 'text', 'N/A') if 'response' in locals() else 'N/A'}")
+        logger.error(f"요청 데이터: {data}")
+        return False
     except Exception as e:
         logger.error(f"{symbol} 저장 실패: {str(e)}", exc_info=True)
         return False

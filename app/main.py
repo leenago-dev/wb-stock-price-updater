@@ -1,6 +1,9 @@
 import logging
+import json
 from typing import Optional, List
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from app.config import settings, get_stock_symbols_override
 from app.supabase_client import (
@@ -18,6 +21,47 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Stock Price Updater", version="1.0.0")
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """요청 검증 오류 처리 (JSON 파싱 오류 포함)"""
+    logger.error(f"요청 검증 오류: {str(exc)}")
+    logger.error(f"요청 경로: {request.url.path}")
+    try:
+        body = await request.body()
+        logger.error(
+            f"요청 본문 (첫 500자): {body[:500].decode('utf-8', errors='ignore') if body else 'N/A'}"
+        )
+    except Exception as e:
+        logger.error(f"요청 본문 읽기 실패: {str(e)}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": f"요청 형식 오류: {str(exc)}", "errors": exc.errors()},
+    )
+
+
+@app.exception_handler(json.JSONDecodeError)
+async def json_decode_exception_handler(request: Request, exc: json.JSONDecodeError):
+    """JSON 디코드 오류 처리"""
+    logger.error(f"JSON 디코드 오류: {str(exc)}")
+    logger.error(f"요청 경로: {request.url.path}")
+    logger.error(f"오류 위치: line {exc.lineno}, column {exc.colno}")
+    try:
+        body = await request.body()
+        logger.error(
+            f"요청 본문 (첫 500자): {body[:500].decode('utf-8', errors='ignore') if body else 'N/A'}"
+        )
+    except Exception as e:
+        logger.error(f"요청 본문 읽기 실패: {str(e)}")
+    return JSONResponse(
+        status_code=400,
+        content={
+            "detail": f"JSON 파싱 오류: {str(exc)}",
+            "line": exc.lineno,
+            "column": exc.colno,
+        },
+    )
 
 
 class UpdatePricesRequest(BaseModel):
@@ -179,6 +223,12 @@ async def update_prices(
             results=results,
         )
 
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON 디코드 오류 (배치 작업): {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"JSON 파싱 오류가 발생했습니다: {str(e)}",
+        )
     except Exception as e:
         logger.error(f"배치 작업 중 오류 발생: {str(e)}", exc_info=True)
         raise HTTPException(

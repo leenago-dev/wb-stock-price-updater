@@ -18,15 +18,15 @@ dependencies = [
 dev = []
 
 [project.scripts]
-app = "uvicorn app.main:app --host 0.0.0.0 --port 8080"
-start = "uvicorn app.main:app --host 0.0.0.0 --port 8080"
-dev = "uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload"
+app = "app.cli:main"
+start = "app.cli:main"
+dev = "app.cli:dev"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.uv]
-dev-dependencies = []
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
 
 [tool.uv.sources]

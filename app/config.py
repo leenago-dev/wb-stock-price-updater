@@ -1,6 +1,6 @@
 import os
 from typing import Optional
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -21,10 +21,12 @@ class Settings(BaseSettings):
     initial_retry_delay_ms: int = 1000
     max_retry_delay_ms: int = 10000
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",  # 정의되지 않은 환경변수 무시
+    )
 
 
 # 전역 설정 인스턴스
