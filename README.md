@@ -29,7 +29,19 @@ stock-price-updater/
 
 ## 로컬 개발
 
-### 1. 환경변수 설정
+### 1. uv 설치
+
+`uv`가 설치되어 있지 않다면 설치하세요:
+
+```bash
+# macOS/Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 또는 pip로 설치
+pip install uv
+```
+
+### 2. 환경변수 설정
 
 `.env.example`을 참고하여 `.env` 파일을 생성하고 필요한 값들을 설정하세요.
 
@@ -38,14 +50,34 @@ cp .env.example .env
 # .env 파일을 편집하여 실제 값 입력
 ```
 
-### 2. 의존성 설치
+### 3. 의존성 설치 및 가상환경 생성
 
 ```bash
+# uv로 프로젝트 초기화 및 의존성 설치
+uv sync
+
+# 또는 기존 pip 사용 시
 pip install -r requirements.txt
 ```
 
-### 3. 서버 실행
+### 4. 서버 실행
 
+**uv 사용 (권장)**:
+```bash
+# 간단한 실행
+uv run app
+
+# 개발 모드 (자동 리로드)
+uv run dev
+
+# 프로덕션 모드
+uv run start
+
+# 또는 직접 실행
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+```
+
+**또는 일반 Python 사용**:
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8080
 ```

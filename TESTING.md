@@ -14,6 +14,12 @@ CRON_SECRET=your_secret_key
 
 ### 2. 의존성 설치
 
+**uv 사용 (권장)**:
+```bash
+uv sync
+```
+
+**또는 pip 사용**:
 ```bash
 pip install -r requirements.txt
 ```
@@ -31,6 +37,19 @@ INSERT INTO managed_stocks (symbol, name, enabled) VALUES
 
 ### 4. 서버 실행
 
+**uv 사용 (권장)**:
+```bash
+# 간단한 실행
+uv run app
+
+# 개발 모드 (자동 리로드)
+uv run dev
+
+# 또는 직접 실행
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+```
+
+**또는 일반 Python 사용**:
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 ```
