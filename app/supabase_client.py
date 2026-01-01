@@ -7,7 +7,7 @@ import json
 
 logger = logging.getLogger(__name__)
 
-# Supabase 클라이언트 초기화
+# Supabase 클라이언트 초기화.
 supabase: Client = create_client(settings.supabase_url, settings.supabase_anon_key)
 
 
@@ -41,7 +41,9 @@ async def get_managed_stocks() -> List[str]:
         return symbols
     except json.JSONDecodeError as e:
         logger.error(f"JSON 디코드 오류 (managed_stocks): {str(e)}", exc_info=True)
-        logger.error(f"응답 내용: {getattr(response, 'text', 'N/A') if 'response' in locals() else 'N/A'}")
+        logger.error(
+            f"응답 내용: {getattr(response, 'text', 'N/A') if 'response' in locals() else 'N/A'}"
+        )
         raise
     except Exception as e:
         logger.error(f"managed_stocks 조회 실패: {str(e)}", exc_info=True)
@@ -87,8 +89,12 @@ async def get_today_stock_prices(symbols: List[str]) -> Dict[str, dict]:
 
         logger.info(f"오늘 날짜 데이터 {len(result)}개 조회 완료")
     except json.JSONDecodeError as e:
-        logger.error(f"JSON 디코드 오류 (get_today_stock_prices): {str(e)}", exc_info=True)
-        logger.error(f"응답 내용: {getattr(response, 'text', 'N/A') if 'response' in locals() else 'N/A'}")
+        logger.error(
+            f"JSON 디코드 오류 (get_today_stock_prices): {str(e)}", exc_info=True
+        )
+        logger.error(
+            f"응답 내용: {getattr(response, 'text', 'N/A') if 'response' in locals() else 'N/A'}"
+        )
         # 에러가 발생해도 빈 딕셔너리 반환하여 계속 진행
     except Exception as e:
         logger.error(f"stock_prices 조회 실패: {str(e)}", exc_info=True)
@@ -154,7 +160,9 @@ async def get_stock_price_from_db(symbol: str) -> Optional[dict]:
         return None
     except json.JSONDecodeError as e:
         logger.error(f"JSON 디코드 오류 ({symbol}): {str(e)}", exc_info=True)
-        logger.error(f"응답 내용: {getattr(response, 'text', 'N/A') if 'response' in locals() else 'N/A'}")
+        logger.error(
+            f"응답 내용: {getattr(response, 'text', 'N/A') if 'response' in locals() else 'N/A'}"
+        )
         return None
     except Exception as e:
         logger.error(f"{symbol} 조회 실패: {str(e)}", exc_info=True)
@@ -195,7 +203,9 @@ async def save_stock_price_to_db(
             return False
     except json.JSONDecodeError as e:
         logger.error(f"JSON 디코드 오류 ({symbol} 저장): {str(e)}", exc_info=True)
-        logger.error(f"응답 내용: {getattr(response, 'text', 'N/A') if 'response' in locals() else 'N/A'}")
+        logger.error(
+            f"응답 내용: {getattr(response, 'text', 'N/A') if 'response' in locals() else 'N/A'}"
+        )
         logger.error(f"요청 데이터: {data}")
         return False
     except Exception as e:
