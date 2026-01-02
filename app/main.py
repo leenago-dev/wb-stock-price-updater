@@ -66,6 +66,7 @@ async def json_decode_exception_handler(request: Request, exc: json.JSONDecodeEr
 
 class UpdatePricesRequest(BaseModel):
     symbols: Optional[List[str]] = None
+    country: Optional[str] = None
 
 
 class SymbolResult(BaseModel):
@@ -107,7 +108,6 @@ async def health_check():
 @app.post("/update-prices", response_model=UpdatePricesResponse)
 async def update_prices(
     request: Optional[UpdatePricesRequest] = None,
-    _: bool = Depends(verify_auth),
 ):
     """
     주식 가격을 업데이트합니다.
@@ -133,7 +133,10 @@ async def update_prices(
                 logger.info(f"환경변수에서 {len(symbols)}개 심볼 로드: {symbols}")
             else:
                 # DB에서 활성화된 종목 조회
-                symbols = await get_managed_stocks()
+                target_country = (
+                    request.country if request and request.country else None
+                )
+                symbols = await get_managed_stocks(country=target_country)
                 logger.info(f"DB에서 {len(symbols)}개 활성화된 종목 조회: {symbols}")
 
         if not symbols:
