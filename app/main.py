@@ -107,7 +107,6 @@ async def health_check():
 @app.post("/update-prices", response_model=UpdatePricesResponse)
 async def update_prices(
     request: Optional[UpdatePricesRequest] = None,
-    _: bool = Depends(verify_auth),
 ):
     """
     주식 가격을 업데이트합니다.
