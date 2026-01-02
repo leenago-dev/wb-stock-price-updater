@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List
 from supabase import create_client, Client
 from app.config import settings
@@ -13,37 +13,47 @@ supabase: Client = create_client(settings.supabase_url, settings.supabase_anon_k
 
 def get_today_date() -> str:
     """오늘 날짜를 YYYY-MM-DD 형식으로 반환 (한국 시간 기준 UTC+9)"""
-    now = datetime.utcnow()
-    korea_time = now + timedelta(hours=9)
+    kst = timezone(timedelta(hours=9))
+    now = datetime.now(timezone.utc)
+    korea_time = now.astimezone(kst)
     return korea_time.strftime("%Y-%m-%d")
 
 
 def get_yesterday_date() -> str:
     """어제 날짜를 YYYY-MM-DD 형식으로 반환 (한국 시간 기준 UTC+9)"""
-    now = datetime.utcnow()
-    korea_time = now + timedelta(hours=9)
+    kst = timezone(timedelta(hours=9))
+    now = datetime.now(timezone.utc)
+    korea_time = now.astimezone(kst)
     yesterday = korea_time - timedelta(days=1)
     return yesterday.strftime("%Y-%m-%d")
 
 
-async def get_managed_stocks() -> List[str]:
-    """managed_stocks 테이블에서 활성화된 심볼 목록 조회"""
+async def get_managed_stocks(country: Optional[str] = None) -> List[str]:
+    """
+    managed_stocks 테이블에서 활성화된 심볼 목록 조회
+    country가 있으면 해당 국가만, 없으면 전체 조회
+    """
     try:
-        response = (
-            supabase.table("managed_stocks")
-            .select("symbol")
-            .eq("enabled", True)
-            .execute()
-        )
+        # 1. 일단 쿼리 기본 틀을 만듭니다. (아직 실행 안 함)
+        query = supabase.table("managed_stocks").select("symbol").eq("enabled", True)
+
+        # 2. [핵심] country가 있을 때만 조건을 추가합니다.
+        if country:
+            query = query.eq(
+                "country", country
+            )  # "country" 컬럼이 변수값과 같은지 확인
+
+        # 3. 이제 실행합니다!
+        response = query.execute()
 
         symbols = [row["symbol"].upper() for row in response.data]
-        logger.info(f"활성화된 종목 {len(symbols)}개 조회: {symbols}")
+        logger.info(f"활성화된 종목 {len(symbols)}개 조회 (국가: {country}): {symbols}")
         return symbols
+
     except json.JSONDecodeError as e:
         logger.error(f"JSON 디코드 오류 (managed_stocks): {str(e)}", exc_info=True)
-        logger.error(
-            f"응답 내용: {getattr(response, 'text', 'N/A') if 'response' in locals() else 'N/A'}"
-        )
+        # response 변수가 없을 수도 있으니 안전하게 로깅
+        logger.error(f"오류 발생")
         raise
     except Exception as e:
         logger.error(f"managed_stocks 조회 실패: {str(e)}", exc_info=True)
@@ -64,6 +74,7 @@ async def get_today_stock_prices(symbols: List[str]) -> Dict[str, dict]:
     today = get_today_date()
 
     result: Dict[str, dict] = {}
+    response = None
 
     try:
         # 오늘 날짜로 한 번에 조회
@@ -92,9 +103,8 @@ async def get_today_stock_prices(symbols: List[str]) -> Dict[str, dict]:
         logger.error(
             f"JSON 디코드 오류 (get_today_stock_prices): {str(e)}", exc_info=True
         )
-        logger.error(
-            f"응답 내용: {getattr(response, 'text', 'N/A') if 'response' in locals() else 'N/A'}"
-        )
+        if response is not None:
+            logger.error(f"응답 내용: {getattr(response, 'text', 'N/A')}")
         # 에러가 발생해도 빈 딕셔너리 반환하여 계속 진행
     except Exception as e:
         logger.error(f"stock_prices 조회 실패: {str(e)}", exc_info=True)
@@ -160,9 +170,7 @@ async def get_stock_price_from_db(symbol: str) -> Optional[dict]:
         return None
     except json.JSONDecodeError as e:
         logger.error(f"JSON 디코드 오류 ({symbol}): {str(e)}", exc_info=True)
-        logger.error(
-            f"응답 내용: {getattr(response, 'text', 'N/A') if 'response' in locals() else 'N/A'}"
-        )
+        # response는 try 블록 내에서만 정의되므로 여기서는 로깅하지 않음
         return None
     except Exception as e:
         logger.error(f"{symbol} 조회 실패: {str(e)}", exc_info=True)
@@ -178,6 +186,7 @@ async def save_stock_price_to_db(
     """
     normalized_symbol = symbol.strip().upper()
     target_date = date or get_today_date()
+    response = None
 
     try:
         data = {
@@ -203,9 +212,8 @@ async def save_stock_price_to_db(
             return False
     except json.JSONDecodeError as e:
         logger.error(f"JSON 디코드 오류 ({symbol} 저장): {str(e)}", exc_info=True)
-        logger.error(
-            f"응답 내용: {getattr(response, 'text', 'N/A') if 'response' in locals() else 'N/A'}"
-        )
+        if response is not None:
+            logger.error(f"응답 내용: {getattr(response, 'text', 'N/A')}")
         logger.error(f"요청 데이터: {data}")
         return False
     except Exception as e:

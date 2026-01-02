@@ -1,5 +1,5 @@
 """CLI entry points for running the application."""
-import sys
+
 import uvicorn
 
 
