@@ -12,6 +12,7 @@ dependencies = [
     "python-dotenv==1.0.1",
     "pydantic==2.9.2",
     "pydantic-settings==2.5.2",
+    "curl-cffi>=0.5.10",
 ]
 
 [project.optional-dependencies]

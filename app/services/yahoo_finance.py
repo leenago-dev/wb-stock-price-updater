@@ -2,12 +2,17 @@ import asyncio
 import yfinance as yf
 import json
 from typing import Optional
+from curl_cffi import requests as crequests
 from app.utils.rate_limiter import request_queue
 from app.config import settings
 from app.utils.logging_config import get_logger
 from app.exceptions import YahooFinanceException, RateLimitException
 
 logger = get_logger(__name__)
+
+# curl_cffi 세션 생성 (Chrome 브라우저로 위장)
+# 모듈 레벨에서 한 번 생성하여 재사용
+_curl_session = crequests.Session(impersonate="chrome")
 
 
 async def fetch_with_retry(
@@ -17,7 +22,8 @@ async def fetch_with_retry(
     try:
         # Rate limiting 적용 (yfinance는 동기 함수이므로 asyncio.to_thread로 래핑)
         async def fetch_ticker():
-            ticker = yf.Ticker(symbol)
+            # curl_cffi 세션을 사용하여 Chrome 브라우저로 위장
+            ticker = yf.Ticker(symbol, session=_curl_session)
             # info를 호출하여 실제 API 요청 발생
             _ = ticker.info
             return ticker
