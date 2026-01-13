@@ -43,7 +43,7 @@ async def health_check():
 
 @router.post("/update-prices", response_model=UpdatePricesResponse)
 async def update_prices(
-    request: Optional[UpdatePricesRequest] = None,
+    request: Request,
     _: bool = Depends(verify_auth),
 ):
     """
@@ -56,8 +56,22 @@ async def update_prices(
     4. 각 심볼에 대해 개별 try-except로 실패 격리
     """
     try:
-        request_symbols = request.symbols if request else None
-        country = request.country if request else None
+        # 요청 본문 읽기 및 파싱
+        body = await request.body()
+        request_data = None
+
+        if body:
+            try:
+                body_str = body.decode('utf-8') if isinstance(body, bytes) else body
+                body_json = json.loads(body_str) if body_str.strip() else {}
+                request_data = UpdatePricesRequest(**body_json) if body_json else None
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.warning(f"요청 본문 파싱 실패, 빈 요청으로 처리: {str(e)}")
+                request_data = None
+
+        # request_data가 None이면 빈 요청으로 처리
+        request_symbols = request_data.symbols if request_data else None
+        country = request_data.country if request_data else None
 
         result = await update_stock_prices(
             request_symbols=request_symbols,
@@ -101,9 +115,27 @@ def setup_exception_handlers(app):
             )
         except Exception as e:
             logger.error(f"요청 본문 읽기 실패: {str(e)}")
+
+        # exc.errors()를 안전하게 직렬화 (bytes 객체 처리)
+        def sanitize_errors(errors):
+            """에러 객체를 JSON 직렬화 가능한 형태로 변환"""
+            sanitized = []
+            for error in errors:
+                sanitized_error = {}
+                for key, value in error.items():
+                    if isinstance(value, bytes):
+                        sanitized_error[key] = value.decode('utf-8', errors='ignore')
+                    else:
+                        sanitized_error[key] = value
+                sanitized.append(sanitized_error)
+            return sanitized
+
         return JSONResponse(
             status_code=422,
-            content={"detail": f"요청 형식 오류: {str(exc)}", "errors": exc.errors()},
+            content={
+                "detail": f"요청 형식 오류: {str(exc)}",
+                "errors": sanitize_errors(exc.errors())
+            },
         )
 
     @app.exception_handler(json.JSONDecodeError)
