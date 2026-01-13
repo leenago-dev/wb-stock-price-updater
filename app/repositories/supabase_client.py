@@ -2,10 +2,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List
 from supabase import create_client, Client
 from app.config import settings
-import logging
+from app.utils.logging_config import get_logger
+from app.exceptions import SupabaseException
 import json
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Supabase 클라이언트 초기화.
 supabase: Client = create_client(settings.supabase_url, settings.supabase_anon_key)
@@ -52,12 +53,11 @@ async def get_managed_stocks(country: Optional[str] = None) -> List[str]:
 
     except json.JSONDecodeError as e:
         logger.error(f"JSON 디코드 오류 (managed_stocks): {str(e)}", exc_info=True)
-        # response 변수가 없을 수도 있으니 안전하게 로깅
         logger.error(f"오류 발생")
-        raise
+        raise SupabaseException(f"JSON 디코드 오류: {str(e)}") from e
     except Exception as e:
         logger.error(f"managed_stocks 조회 실패: {str(e)}", exc_info=True)
-        raise
+        raise SupabaseException(f"managed_stocks 조회 실패: {str(e)}") from e
 
 
 async def get_today_stock_prices(symbols: List[str]) -> Dict[str, dict]:
@@ -170,7 +170,6 @@ async def get_stock_price_from_db(symbol: str) -> Optional[dict]:
         return None
     except json.JSONDecodeError as e:
         logger.error(f"JSON 디코드 오류 ({symbol}): {str(e)}", exc_info=True)
-        # response는 try 블록 내에서만 정의되므로 여기서는 로깅하지 않음
         return None
     except Exception as e:
         logger.error(f"{symbol} 조회 실패: {str(e)}", exc_info=True)

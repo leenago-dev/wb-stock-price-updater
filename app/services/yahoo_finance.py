@@ -1,12 +1,13 @@
 import asyncio
 import yfinance as yf
-import logging
 import json
 from typing import Optional
-from app.rate_limiter import request_queue
+from app.utils.rate_limiter import request_queue
 from app.config import settings
+from app.utils.logging_config import get_logger
+from app.exceptions import YahooFinanceException, RateLimitException
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def fetch_with_retry(
@@ -45,7 +46,7 @@ async def fetch_with_retry(
             await asyncio.sleep(delay / 1000)
             return await fetch_with_retry(symbol, retry_count + 1)
 
-        raise
+        raise YahooFinanceException(f"JSON 디코드 오류: {error_message}") from error
     except Exception as error:
         error_message = str(error)
         is_rate_limit_error = (
@@ -69,7 +70,9 @@ async def fetch_with_retry(
             await asyncio.sleep(delay / 1000)
             return await fetch_with_retry(symbol, retry_count + 1)
 
-        raise error
+        if is_rate_limit_error:
+            raise RateLimitException(f"Rate limit 오류: {error_message}") from error
+        raise YahooFinanceException(f"Yahoo Finance API 오류: {error_message}") from error
 
 
 async def get_quote_data(symbol: str) -> Optional[dict]:
@@ -115,6 +118,9 @@ async def get_quote_data(symbol: str) -> Optional[dict]:
         logger.error(f"yfinance 응답 파싱 실패 - 심볼: {symbol}")
         # JSONDecodeError는 이미 fetch_with_retry에서 재시도했으므로 여기서는 None 반환
         return None
+    except (YahooFinanceException, RateLimitException):
+        # 커스텀 예외는 이미 로깅되었으므로 None 반환
+        return None
     except Exception as e:
         error_message = str(e)
         # Rate limit 관련 오류는 None 반환 (재시도는 이미 했음)
@@ -122,4 +128,4 @@ async def get_quote_data(symbol: str) -> Optional[dict]:
             logger.error(f"{symbol}: Rate limit 오류로 인한 실패")
             return None
         logger.error(f"{symbol} 조회 실패: {error_message}", exc_info=True)
-        raise
+        raise YahooFinanceException(f"{symbol} 조회 실패: {error_message}") from e
