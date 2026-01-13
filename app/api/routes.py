@@ -2,7 +2,7 @@
 
 import json
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, HTTPException, Request, Depends, Body
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -43,7 +43,7 @@ async def health_check():
 
 @router.post("/update-prices", response_model=UpdatePricesResponse)
 async def update_prices(
-    request: Request,
+    request_body: Optional[UpdatePricesRequest] = Body(None),
     _: bool = Depends(verify_auth),
 ):
     """
@@ -56,22 +56,9 @@ async def update_prices(
     4. 각 심볼에 대해 개별 try-except로 실패 격리
     """
     try:
-        # 요청 본문 읽기 및 파싱
-        body = await request.body()
-        request_data = None
-
-        if body:
-            try:
-                body_str = body.decode('utf-8') if isinstance(body, bytes) else body
-                body_json = json.loads(body_str) if body_str.strip() else {}
-                request_data = UpdatePricesRequest(**body_json) if body_json else None
-            except (json.JSONDecodeError, ValueError) as e:
-                logger.warning(f"요청 본문 파싱 실패, 빈 요청으로 처리: {str(e)}")
-                request_data = None
-
-        # request_data가 None이면 빈 요청으로 처리
-        request_symbols = request_data.symbols if request_data else None
-        country = request_data.country if request_data else None
+        # request_body가 None이면 빈 요청으로 처리
+        request_symbols = request_body.symbols if request_body else None
+        country = request_body.country if request_body else None
 
         result = await update_stock_prices(
             request_symbols=request_symbols,
@@ -104,7 +91,9 @@ def setup_exception_handlers(app):
     """예외 핸들러 설정"""
 
     @app.exception_handler(RequestValidationError)
-    async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    async def validation_exception_handler(
+        request: Request, exc: RequestValidationError
+    ):
         """요청 검증 오류 처리 (JSON 파싱 오류 포함)"""
         logger.error(f"요청 검증 오류: {str(exc)}")
         logger.error(f"요청 경로: {request.url.path}")
@@ -116,30 +105,66 @@ def setup_exception_handlers(app):
         except Exception as e:
             logger.error(f"요청 본문 읽기 실패: {str(e)}")
 
-        # exc.errors()를 안전하게 직렬화 (bytes 객체 처리)
+        # exc.errors()를 안전하게 직렬화 (bytes 객체 및 기타 직렬화 불가능한 객체 처리)
+        def sanitize_value(value):
+            """값을 JSON 직렬화 가능한 형태로 변환"""
+            if isinstance(value, bytes):
+                return value.decode("utf-8", errors="ignore")
+            elif isinstance(value, (dict, list)):
+                # 재귀적으로 처리
+                try:
+                    return json.loads(json.dumps(value, default=str))
+                except (TypeError, ValueError):
+                    return str(value)
+            elif isinstance(value, (str, int, float, bool, type(None))):
+                return value
+            else:
+                # 기타 타입은 문자열로 변환
+                try:
+                    json.dumps(value, default=str)
+                    return value
+                except (TypeError, ValueError):
+                    return str(value)
+
         def sanitize_errors(errors):
             """에러 객체를 JSON 직렬화 가능한 형태로 변환"""
             sanitized = []
             for error in errors:
                 sanitized_error = {}
                 for key, value in error.items():
-                    if isinstance(value, bytes):
-                        sanitized_error[key] = value.decode('utf-8', errors='ignore')
-                    else:
-                        sanitized_error[key] = value
+                    sanitized_error[key] = sanitize_value(value)
                 sanitized.append(sanitized_error)
             return sanitized
 
-        return JSONResponse(
-            status_code=422,
-            content={
-                "detail": f"요청 형식 오류: {str(exc)}",
-                "errors": sanitize_errors(exc.errors())
-            },
-        )
+        try:
+            sanitized_errors = sanitize_errors(exc.errors())
+        except Exception as e:
+            logger.error(f"에러 직렬화 실패: {str(e)}", exc_info=True)
+            # 최소한의 에러 정보라도 반환
+            sanitized_errors = [
+                {"error": "에러 정보를 직렬화할 수 없습니다", "raw_error": str(exc)}
+            ]
+
+        try:
+            return JSONResponse(
+                status_code=422,
+                content={"detail": str(exc), "errors": sanitized_errors},
+            )
+        except Exception as e:
+            # JSONResponse 생성도 실패하면 최소한의 응답 반환
+            logger.error(f"JSONResponse 생성 실패: {str(e)}", exc_info=True)
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "detail": "요청 형식 오류가 발생했습니다",
+                    "errors": [{"error": "에러 정보를 처리할 수 없습니다"}],
+                },
+            )
 
     @app.exception_handler(json.JSONDecodeError)
-    async def json_decode_exception_handler(request: Request, exc: json.JSONDecodeError):
+    async def json_decode_exception_handler(
+        request: Request, exc: json.JSONDecodeError
+    ):
         """JSON 디코드 오류 처리"""
         logger.error(f"JSON 디코드 오류: {str(exc)}")
         logger.error(f"요청 경로: {request.url.path}")
