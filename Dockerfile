@@ -12,11 +12,15 @@ RUN apt-get update && apt-get install -y \
 # uv 설치
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# pyproject.toml과 uv.lock 복사 (lock 파일이 있으면 더 빠르고 재현 가능한 설치)
+# pyproject.toml과 uv.lock 복사
+# --no-install-project 옵션을 사용하므로 README.md는 필요 없음
 COPY pyproject.toml uv.lock ./
 
-# 의존성 설치 (--frozen: lock 파일에 고정, --no-dev: 개발 의존성 제외)
-RUN uv sync --frozen --no-dev
+# 의존성만 설치 (프로젝트 자체는 설치하지 않음)
+# --frozen: lock 파일에 고정
+# --no-dev: 개발 의존성 제외
+# --no-install-project: 프로젝트 자체를 editable 모드로 설치하지 않음 (빌드 불필요)
+RUN uv sync --frozen --no-dev --no-install-project
 
 # 애플리케이션 코드 복사
 COPY app/ ./app/
