@@ -15,9 +15,7 @@ logger = get_logger(__name__)
 _curl_session = crequests.Session(impersonate="chrome")
 
 
-async def fetch_with_retry(
-    symbol: str, retry_count: int = 0
-) -> Optional[yf.Ticker]:
+async def fetch_with_retry(symbol: str, retry_count: int = 0) -> Optional[yf.Ticker]:
     """Yahoo Finance API에서 주식 정보를 가져오고 재시도 로직 적용"""
     try:
         # Rate limiting 적용 (yfinance는 동기 함수이므로 asyncio.to_thread로 래핑)
@@ -40,8 +38,8 @@ async def fetch_with_retry(
 
         if retry_count < settings.max_retries:
             delay = min(
-                settings.initial_retry_delay_ms * (2 ** retry_count),
-                settings.max_retry_delay_ms
+                settings.initial_retry_delay_ms * (2**retry_count),
+                settings.max_retry_delay_ms,
             )
 
             logger.warning(
@@ -64,8 +62,8 @@ async def fetch_with_retry(
 
         if is_rate_limit_error and retry_count < settings.max_retries:
             delay = min(
-                settings.initial_retry_delay_ms * (2 ** retry_count),
-                settings.max_retry_delay_ms
+                settings.initial_retry_delay_ms * (2**retry_count),
+                settings.max_retry_delay_ms,
             )
 
             logger.warning(
@@ -78,7 +76,9 @@ async def fetch_with_retry(
 
         if is_rate_limit_error:
             raise RateLimitException(f"Rate limit 오류: {error_message}") from error
-        raise YahooFinanceException(f"Yahoo Finance API 오류: {error_message}") from error
+        raise YahooFinanceException(
+            f"Yahoo Finance API 오류: {error_message}"
+        ) from error
 
 
 async def get_quote_data(symbol: str) -> Optional[dict]:
@@ -110,11 +110,7 @@ async def get_quote_data(symbol: str) -> Optional[dict]:
             "symbol": info.get("symbol", symbol).upper(),
             "price": float(regular_market_price),
             "currency": info.get("currency"),
-            "name": (
-                info.get("shortName")
-                or info.get("longName")
-                or info.get("name")
-            ),
+            "name": (info.get("shortName") or info.get("longName") or info.get("name")),
             "changePercent": info.get("regularMarketChangePercent"),
         }
 

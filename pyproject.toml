@@ -2,7 +2,6 @@
 name = "wb-stock-price-updater"
 version = "0.1.0"
 description = "Yahoo Finance API를 사용하여 주식 가격을 수집하고 Supabase에 저장하는 Python 백엔드 서비스"
-readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi==0.115.0",
@@ -15,19 +14,7 @@ dependencies = [
     "curl-cffi>=0.5.10",
 ]
 
-[project.optional-dependencies]
-dev = []
-
 [project.scripts]
 app = "app.cli:main"
 start = "app.cli:main"
 dev = "app.cli:dev"
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["app"]
-
-[tool.uv.sources]
