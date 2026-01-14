@@ -178,10 +178,13 @@ async def get_stock_price_from_db(symbol: str) -> Optional[dict]:
 
 async def save_stock_price_to_db(
     symbol: str, quote_data: dict, date: Optional[str] = None
-) -> bool:
+) -> tuple[bool, Optional[str]]:
     """
     Supabase에 주식 종가 저장
     중복 체크 후 저장 (symbol, date 조합이 unique)
+
+    Returns:
+        tuple[bool, Optional[str]]: (성공 여부, 에러 메시지)
     """
     normalized_symbol = symbol.strip().upper()
     target_date = date or get_today_date()
@@ -205,16 +208,31 @@ async def save_stock_price_to_db(
 
         if response.data:
             logger.debug(f"{symbol} 저장 완료: {target_date}")
-            return True
+            return True, None
         else:
-            logger.warning(f"{symbol} 저장 실패: 응답 데이터 없음")
-            return False
+            error_msg = f"응답 데이터 없음 (symbol: {symbol}, date: {target_date})"
+            logger.warning(f"{symbol} 저장 실패: {error_msg}")
+            return False, error_msg
     except json.JSONDecodeError as e:
+        error_msg = f"JSON 디코드 오류: {str(e)}"
         logger.error(f"JSON 디코드 오류 ({symbol} 저장): {str(e)}", exc_info=True)
         if response is not None:
-            logger.error(f"응답 내용: {getattr(response, 'text', 'N/A')}")
+            response_text = getattr(response, 'text', 'N/A')
+            logger.error(f"응답 내용: {response_text}")
+            error_msg = f"{error_msg} (응답: {response_text[:200]})"
         logger.error(f"요청 데이터: {data}")
-        return False
+        return False, error_msg
     except Exception as e:
+        error_msg = f"Supabase 저장 실패: {str(e)}"
         logger.error(f"{symbol} 저장 실패: {str(e)}", exc_info=True)
-        return False
+        # Supabase 클라이언트 에러의 경우 더 구체적인 정보 추출
+        error_str = str(e)
+        if hasattr(e, 'message'):
+            error_msg = f"Supabase 저장 실패: {e.message}"
+        elif "duplicate key" in error_str.lower() or "unique constraint" in error_str.lower():
+            error_msg = f"중복 키 오류: 이미 존재하는 데이터입니다 (symbol: {symbol}, date: {target_date})"
+        elif "foreign key" in error_str.lower():
+            error_msg = f"외래 키 오류: 참조하는 테이블에 데이터가 없습니다"
+        elif "permission" in error_str.lower() or "unauthorized" in error_str.lower():
+            error_msg = f"권한 오류: Supabase 인증 실패"
+        return False, error_msg

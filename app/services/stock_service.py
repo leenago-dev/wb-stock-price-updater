@@ -178,13 +178,14 @@ async def update_stock_prices(
                     continue
 
                 # Supabase에 저장
-                saved = await save_stock_price_to_db(symbol, quote_data)
+                saved, save_error = await save_stock_price_to_db(symbol, quote_data)
 
                 if saved:
                     results.append(SymbolResult(symbol=symbol, success=True))
                     logger.info(f"✅ '{symbol}' 업데이트 성공")
                 else:
-                    error_msg = "Supabase 저장 실패"
+                    # 구체적인 에러 메시지 사용 (없으면 기본 메시지)
+                    error_msg = save_error or "Supabase 저장 실패"
                     results.append(
                         SymbolResult(
                             symbol=symbol,
