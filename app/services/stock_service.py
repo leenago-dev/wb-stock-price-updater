@@ -1,5 +1,6 @@
 """주식 가격 업데이트 비즈니스 로직"""
 
+import traceback
 from typing import List, Optional, Dict
 from app.config import settings, get_stock_symbols_override
 from app.repositories.supabase_client import (
@@ -134,27 +135,43 @@ async def update_stock_prices(
         # 2. API 호출이 필요한 심볼 필터링
         symbols_to_fetch, existing_prices = await filter_symbols_to_fetch(symbols)
 
+        # 전체 업데이트 대상 종목 수 계산
+        total_symbols = len(symbols_to_fetch) + len(existing_prices)
+
+        # 🚀 시작 로그
+        logger.info(f"🚀 배치 작업 시작 - 업데이트 대상: {total_symbols}개 종목")
+
         # 3. 각 심볼에 대해 개별 try-except로 실패 격리
         results: List[SymbolResult] = []
+        failed_symbols: List[str] = []  # 실패한 종목 리스트
 
         # 이미 있는 종목은 성공으로 처리
-        for symbol in existing_prices.keys():
+        for idx, symbol in enumerate(existing_prices.keys(), start=1):
             results.append(SymbolResult(symbol=symbol, success=True))
+            logger.info(f"[{idx}/{total_symbols}] '{symbol}' - 이미 DB에 존재하여 스킵")
 
         # API 호출이 필요한 종목 처리
+        processed_count = len(existing_prices)
         for symbol in symbols_to_fetch:
+            processed_count += 1
             try:
+                # 진행 상황 로그: 시작
+                logger.info(f"[{processed_count}/{total_symbols}] '{symbol}' 데이터 업데이트 시도...")
+
                 # Yahoo Finance API에서 데이터 가져오기
                 quote_data = await get_quote_data(symbol)
 
                 if not quote_data:
+                    error_msg = "가격 정보를 찾을 수 없습니다."
                     results.append(
                         SymbolResult(
                             symbol=symbol,
                             success=False,
-                            error="가격 정보를 찾을 수 없습니다.",
+                            error=error_msg,
                         )
                     )
+                    failed_symbols.append(symbol)
+                    logger.error(f"🚨 '{symbol}' 업데이트 실패 - {error_msg}")
                     continue
 
                 # Supabase에 저장
@@ -162,16 +179,18 @@ async def update_stock_prices(
 
                 if saved:
                     results.append(SymbolResult(symbol=symbol, success=True))
-                    logger.info(f"{symbol} 업데이트 성공")
+                    logger.info(f"✅ '{symbol}' 업데이트 성공")
                 else:
+                    error_msg = "Supabase 저장 실패"
                     results.append(
                         SymbolResult(
                             symbol=symbol,
                             success=False,
-                            error="Supabase 저장 실패",
+                            error=error_msg,
                         )
                     )
-                    logger.error(f"{symbol} 저장 실패")
+                    failed_symbols.append(symbol)
+                    logger.error(f"🚨 '{symbol}' 업데이트 실패 - {error_msg}")
 
             except Exception as e:
                 # 실패 격리: 한 종목 실패가 전체를 중단시키지 않음
@@ -179,16 +198,31 @@ async def update_stock_prices(
                 results.append(
                     SymbolResult(symbol=symbol, success=False, error=error_message)
                 )
-                logger.error(f"{symbol} 처리 실패: {error_message}", exc_info=True)
+                failed_symbols.append(symbol)
+
+                # 상세 에러 로그 (traceback 포함)
+                error_traceback = traceback.format_exc()
+                logger.error(
+                    f"🚨 '{symbol}' 업데이트 실패 - {error_message}\n"
+                    f"Traceback:\n{error_traceback}"
+                )
 
         # 통계 계산
         success_count = sum(1 for r in results if r.success)
         failure_count = sum(1 for r in results if not r.success)
 
-        logger.info(
-            f"배치 작업 완료: 전체 {len(results)}개, "
-            f"성공 {success_count}개, 실패 {failure_count}개"
-        )
+        # 🏁 최종 요약 로그
+        if failed_symbols:
+            logger.info(
+                f"🏁 배치 작업 종료 - 전체: {total_symbols}, "
+                f"성공: {success_count}, 실패: {failure_count} "
+                f"(실패 종목: {', '.join(failed_symbols)})"
+            )
+        else:
+            logger.info(
+                f"🏁 배치 작업 종료 - 전체: {total_symbols}, "
+                f"성공: {success_count}, 실패: {failure_count}"
+            )
 
         return {
             "success": True,
