@@ -1,21 +1,49 @@
-__pycache__
-*.pyc
-*.pyo
-*.pyd
-.Python
-*.so
-*.egg
-*.egg-info
-dist
-build
-.env
-.venv
-venv/
-ENV/
-env/
+# Git
 .git
 .gitignore
-README.md
-.pytest_cache
+
+# Environment variables (Cloud Run에서 환경 변수로 설정)
+.env
+.env.local
+.env.*.local
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.pytest_cache/
 .coverage
 htmlcov/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Documentation (선택적, 필요하면 포함 가능)
+README.md
+.env.example
+
+# Logs
+*.log
+
+# Cloud
+.gcloudignore
