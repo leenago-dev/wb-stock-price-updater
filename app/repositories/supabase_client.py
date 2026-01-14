@@ -3,6 +3,7 @@ from typing import Optional, Dict, List
 from supabase import create_client, Client
 from app.config import settings
 from app.utils.logging_config import get_logger
+from app.utils.slack_notifier import send_slack_error_log
 from app.exceptions import SupabaseException
 import json
 
@@ -52,12 +53,16 @@ async def get_managed_stocks(country: Optional[str] = None) -> List[str]:
         return symbols
 
     except json.JSONDecodeError as e:
-        logger.error(f"JSON 디코드 오류 (managed_stocks): {str(e)}", exc_info=True)
+        error_message = f"JSON 디코드 오류 (managed_stocks): {str(e)}"
+        logger.error(error_message, exc_info=True)
         logger.error(f"오류 발생")
-        raise SupabaseException(f"JSON 디코드 오류: {str(e)}") from e
+        send_slack_error_log(None, e)
+        raise SupabaseException(error_message) from e
     except Exception as e:
-        logger.error(f"managed_stocks 조회 실패: {str(e)}", exc_info=True)
-        raise SupabaseException(f"managed_stocks 조회 실패: {str(e)}") from e
+        error_message = f"managed_stocks 조회 실패: {str(e)}"
+        logger.error(error_message, exc_info=True)
+        send_slack_error_log(None, e)
+        raise SupabaseException(error_message) from e
 
 
 async def get_today_stock_prices(symbols: List[str]) -> Dict[str, dict]:
@@ -221,6 +226,7 @@ async def save_stock_price_to_db(
             logger.error(f"응답 내용: {response_text}")
             error_msg = f"{error_msg} (응답: {response_text[:200]})"
         logger.error(f"요청 데이터: {data}")
+        send_slack_error_log(symbol, e)
         return False, error_msg
     except Exception as e:
         error_msg = f"Supabase 저장 실패: {str(e)}"
@@ -235,4 +241,5 @@ async def save_stock_price_to_db(
             error_msg = f"외래 키 오류: 참조하는 테이블에 데이터가 없습니다"
         elif "permission" in error_str.lower() or "unauthorized" in error_str.lower():
             error_msg = f"권한 오류: Supabase 인증 실패"
+        send_slack_error_log(symbol, e)
         return False, error_msg

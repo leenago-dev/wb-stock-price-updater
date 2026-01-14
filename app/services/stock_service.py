@@ -10,6 +10,7 @@ from app.repositories.supabase_client import (
 )
 from app.services.yahoo_finance import get_quote_data
 from app.utils.logging_config import get_logger
+from app.utils.slack_notifier import send_slack_error_log
 from app.exceptions import StockPriceUpdaterException
 
 logger = get_logger(__name__)
@@ -175,6 +176,8 @@ async def update_stock_prices(
                     )
                     failed_symbols.append(symbol)
                     logger.error(f"🚨 '{symbol}' 업데이트 실패 - {error_msg}")
+                    # Slack 상세 에러 리포트 전송
+                    send_slack_error_log(symbol, Exception(error_msg))
                     continue
 
                 # Supabase에 저장
@@ -195,6 +198,8 @@ async def update_stock_prices(
                     )
                     failed_symbols.append(symbol)
                     logger.error(f"🚨 '{symbol}' 업데이트 실패 - {error_msg}")
+                    # Slack 상세 에러 리포트 전송
+                    send_slack_error_log(symbol, Exception(error_msg))
 
             except Exception as e:
                 # 실패 격리: 한 종목 실패가 전체를 중단시키지 않음
@@ -210,6 +215,8 @@ async def update_stock_prices(
                     f"🚨 '{symbol}' 업데이트 실패 - {error_message}\n"
                     f"Traceback:\n{error_traceback}"
                 )
+                # Slack 상세 에러 리포트 전송 (Block Kit 사용)
+                send_slack_error_log(symbol, e)
 
         # 통계 계산
         success_count = sum(1 for r in results if r.success)
@@ -237,7 +244,10 @@ async def update_stock_prices(
         }
 
     except Exception as e:
-        logger.error(f"배치 작업 중 오류 발생: {str(e)}", exc_info=True)
+        error_message = str(e)
+        logger.error(f"배치 작업 중 오류 발생: {error_message}", exc_info=True)
+        # Slack 상세 에러 리포트 전송 (심볼 없이)
+        send_slack_error_log(None, e)
         raise StockPriceUpdaterException(
-            f"배치 작업 중 오류가 발생했습니다: {str(e)}"
+            f"배치 작업 중 오류가 발생했습니다: {error_message}"
         ) from e

@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     # 오버라이드용 심볼 목록 (선택사항)
     stock_symbols: Optional[str] = None
 
+    # Slack Webhook 설정 (선택사항)
+    slack_webhook_url: Optional[str] = None
+
     # Rate Limiting 설정
     min_request_delay_ms: int = 200
     max_concurrent_requests: int = 3

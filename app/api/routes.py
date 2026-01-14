@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from app.api.dependencies import verify_auth
 from app.services.stock_service import update_stock_prices
 from app.utils.logging_config import get_logger
+from app.utils.slack_notifier import send_slack_error_log
 from app.exceptions import StockPriceUpdaterException
 
 logger = get_logger(__name__)
@@ -68,22 +69,28 @@ async def update_prices(
         return UpdatePricesResponse(**result)
 
     except json.JSONDecodeError as e:
+        error_message = f"JSON 파싱 오류가 발생했습니다: {str(e)}"
         logger.error(f"JSON 디코드 오류 (배치 작업): {str(e)}", exc_info=True)
+        send_slack_error_log(None, e)
         raise HTTPException(
             status_code=500,
-            detail=f"JSON 파싱 오류가 발생했습니다: {str(e)}",
+            detail=error_message,
         )
     except StockPriceUpdaterException as e:
-        logger.error(f"배치 작업 중 오류 발생: {str(e)}", exc_info=True)
+        error_message = str(e)
+        logger.error(f"배치 작업 중 오류 발생: {error_message}", exc_info=True)
+        send_slack_error_log(None, e)
         raise HTTPException(
             status_code=500,
-            detail=str(e),
+            detail=error_message,
         )
     except Exception as e:
+        error_message = f"배치 작업 중 오류가 발생했습니다: {str(e)}"
         logger.error(f"배치 작업 중 예상치 못한 오류 발생: {str(e)}", exc_info=True)
+        send_slack_error_log(None, e)
         raise HTTPException(
             status_code=500,
-            detail=f"배치 작업 중 오류가 발생했습니다: {str(e)}",
+            detail=error_message,
         )
 
 
@@ -95,8 +102,10 @@ def setup_exception_handlers(app):
         request: Request, exc: RequestValidationError
     ):
         """요청 검증 오류 처리 (JSON 파싱 오류 포함)"""
-        logger.error(f"요청 검증 오류: {str(exc)}")
+        error_message = f"요청 검증 오류: {str(exc)} (경로: {request.url.path})"
+        logger.error(error_message)
         logger.error(f"요청 경로: {request.url.path}")
+        send_slack_error_log(None, RequestValidationError(error_message))
         try:
             body = await request.body()
             logger.error(
@@ -166,9 +175,11 @@ def setup_exception_handlers(app):
         request: Request, exc: json.JSONDecodeError
     ):
         """JSON 디코드 오류 처리"""
+        error_message = f"JSON 디코드 오류: {str(exc)} (line {exc.lineno}, column {exc.colno})"
         logger.error(f"JSON 디코드 오류: {str(exc)}")
         logger.error(f"요청 경로: {request.url.path}")
         logger.error(f"오류 위치: line {exc.lineno}, column {exc.colno}")
+        send_slack_error_log(None, exc)
         try:
             body = await request.body()
             logger.error(

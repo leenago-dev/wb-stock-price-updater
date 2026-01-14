@@ -5,6 +5,7 @@ from typing import Optional
 from app.utils.rate_limiter import request_queue
 from app.config import settings
 from app.utils.logging_config import get_logger
+from app.utils.slack_notifier import send_slack_error_log
 from app.exceptions import YahooFinanceException, RateLimitException
 
 logger = get_logger(__name__)
@@ -45,7 +46,9 @@ async def fetch_with_retry(symbol: str, retry_count: int = 0) -> Optional[yf.Tic
             await asyncio.sleep(delay / 1000)
             return await fetch_with_retry(symbol, retry_count + 1)
 
-        raise YahooFinanceException(f"JSON 디코드 오류: {error_message}") from error
+        error_msg = f"JSON 디코드 오류: {error_message}"
+        send_slack_error_log(symbol, YahooFinanceException(error_msg))
+        raise YahooFinanceException(error_msg) from error
     except AttributeError as error:
         # 'str' object has no attribute 'name' 같은 AttributeError 처리
         error_message = str(error)
@@ -67,9 +70,9 @@ async def fetch_with_retry(symbol: str, retry_count: int = 0) -> Optional[yf.Tic
             await asyncio.sleep(delay / 1000)
             return await fetch_with_retry(symbol, retry_count + 1)
 
-        raise YahooFinanceException(
-            f"Yahoo Finance API 오류: {error_message}"
-        ) from error
+        error_msg = f"Yahoo Finance API 오류: {error_message}"
+        send_slack_error_log(symbol, YahooFinanceException(error_msg))
+        raise YahooFinanceException(error_msg) from error
     except Exception as error:
         error_message = str(error)
         is_rate_limit_error = (
@@ -94,10 +97,12 @@ async def fetch_with_retry(symbol: str, retry_count: int = 0) -> Optional[yf.Tic
             return await fetch_with_retry(symbol, retry_count + 1)
 
         if is_rate_limit_error:
-            raise RateLimitException(f"Rate limit 오류: {error_message}") from error
-        raise YahooFinanceException(
-            f"Yahoo Finance API 오류: {error_message}"
-        ) from error
+            error_msg = f"Rate limit 오류: {error_message}"
+            send_slack_error_log(symbol, RateLimitException(error_msg))
+            raise RateLimitException(error_msg) from error
+        error_msg = f"Yahoo Finance API 오류: {error_message}"
+        send_slack_error_log(symbol, YahooFinanceException(error_msg))
+        raise YahooFinanceException(error_msg) from error
 
 
 async def get_quote_data(symbol: str) -> tuple[Optional[dict], Optional[str]]:
@@ -131,18 +136,21 @@ async def get_quote_data(symbol: str) -> tuple[Optional[dict], Optional[str]]:
             if ticker is None:
                 error_reason = "재시도 후에도 Ticker 객체를 가져오지 못함"
                 logger.error(f"{symbol}: {error_reason}")
+                send_slack_error_log(symbol, Exception(error_reason))
                 return None, error_reason
             try:
                 info = ticker.info
             except AttributeError as retry_error:
                 error_reason = f"재시도 후에도 ticker.info 접근 실패 (AttributeError): {str(retry_error)}"
                 logger.error(f"{symbol}: {error_reason}")
+                send_slack_error_log(symbol, retry_error)
                 return None, error_reason
             except Exception as retry_error:
                 error_reason = (
                     f"재시도 후에도 ticker.info 접근 실패: {str(retry_error)}"
                 )
                 logger.error(f"{symbol}: {error_reason}")
+                send_slack_error_log(symbol, retry_error)
                 return None, error_reason
         except (json.JSONDecodeError, KeyError) as e:
             logger.warning(f"{symbol}: ticker.info 접근 실패, 재시도: {str(e)}")
@@ -151,6 +159,7 @@ async def get_quote_data(symbol: str) -> tuple[Optional[dict], Optional[str]]:
             if ticker is None:
                 error_reason = "재시도 후에도 Ticker 객체를 가져오지 못함"
                 logger.error(f"{symbol}: {error_reason}")
+                send_slack_error_log(symbol, Exception(error_reason))
                 return None, error_reason
             try:
                 info = ticker.info
@@ -159,6 +168,7 @@ async def get_quote_data(symbol: str) -> tuple[Optional[dict], Optional[str]]:
                     f"재시도 후에도 ticker.info 접근 실패: {str(retry_error)}"
                 )
                 logger.error(f"{symbol}: {error_reason}")
+                send_slack_error_log(symbol, retry_error)
                 return None, error_reason
 
         # info가 None이거나 빈 딕셔너리인지 체크
@@ -213,10 +223,14 @@ async def get_quote_data(symbol: str) -> tuple[Optional[dict], Optional[str]]:
         error_reason = f"JSON 디코드 오류: {str(e)}"
         logger.error(f"JSON 디코드 오류 ({symbol}): {str(e)}", exc_info=True)
         logger.error(f"yfinance 응답 파싱 실패 - 심볼: {symbol}")
+        # Slack 상세 에러 리포트 전송
+        send_slack_error_log(symbol, e)
         # JSONDecodeError는 이미 fetch_with_retry에서 재시도했으므로 여기서는 None 반환
         return None, error_reason
     except RateLimitException as e:
         error_reason = f"Rate limit 오류 (429 Too Many Requests)"
+        # Slack 상세 에러 리포트 전송
+        send_slack_error_log(symbol, e)
         # 커스텀 예외는 이미 로깅되었으므로 None 반환
         return None, error_reason
     except YahooFinanceException as e:
@@ -226,6 +240,8 @@ async def get_quote_data(symbol: str) -> tuple[Optional[dict], Optional[str]]:
             error_reason = error_msg
         else:
             error_reason = f"Yahoo Finance API 오류: {error_msg}"
+        # Slack 상세 에러 리포트 전송
+        send_slack_error_log(symbol, e)
         # 커스텀 예외는 이미 로깅되었으므로 None 반환
         return None, error_reason
     except Exception as e:
@@ -234,6 +250,9 @@ async def get_quote_data(symbol: str) -> tuple[Optional[dict], Optional[str]]:
         if "429" in error_message or "Too Many Requests" in error_message:
             error_reason = f"Rate limit 오류: {error_message}"
             logger.error(f"{symbol}: Rate limit 오류로 인한 실패")
+            send_slack_error_log(symbol, RateLimitException(error_reason))
             return None, error_reason
         logger.error(f"{symbol} 조회 실패: {error_message}", exc_info=True)
-        raise YahooFinanceException(f"{symbol} 조회 실패: {error_message}") from e
+        error_reason = f"{symbol} 조회 실패: {error_message}"
+        send_slack_error_log(symbol, e)
+        raise YahooFinanceException(error_reason) from e
