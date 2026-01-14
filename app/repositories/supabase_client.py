@@ -30,27 +30,32 @@ def get_yesterday_date() -> str:
     return yesterday.strftime("%Y-%m-%d")
 
 
-async def get_managed_stocks(country: Optional[str] = None) -> List[str]:
+async def get_managed_stocks(country: Optional[str] = None) -> List[Dict[str, str]]:
     """
     managed_stocks 테이블에서 활성화된 심볼 목록 조회
     country가 있으면 해당 국가만, 없으면 전체 조회
     """
     try:
-        # 1. 일단 쿼리 기본 틀을 만듭니다. (아직 실행 안 함)
-        query = supabase.table("managed_stocks").select("symbol").eq("enabled", True)
+        # symbol과 country를 같이 조회해야 나중에 저장할 때 국가를 알 수 있습니다.
+        query = supabase.table("managed_stocks").select("symbol, country").eq("enabled", True)
 
-        # 2. [핵심] country가 있을 때만 조건을 추가합니다.
+        # country가 있을 때만 조건을 추가합니다.
         if country:
-            query = query.eq(
-                "country", country
-            )  # "country" 컬럼이 변수값과 같은지 확인
+            query = query.eq("country", country)
 
-        # 3. 이제 실행합니다!
         response = query.execute()
 
-        symbols = [row["symbol"].upper() for row in response.data]
-        logger.info(f"활성화된 종목 {len(symbols)}개 조회 (국가: {country}): {symbols}")
-        return symbols
+        # 결과 데이터를 딕셔너리 리스트로 변환
+        stocks = [
+            {"symbol": row["symbol"].upper(), "country": row["country"]}
+            for row in response.data
+        ]
+
+        # 로그에는 심볼만 예쁘게 출력
+        symbols_only = [s['symbol'] for s in stocks]
+        logger.info(f"활성화된 종목 {len(stocks)}개 조회 (국가: {country}): {symbols_only}")
+
+        return stocks
 
     except json.JSONDecodeError as e:
         error_message = f"JSON 디코드 오류 (managed_stocks): {str(e)}"
@@ -182,17 +187,37 @@ async def get_stock_price_from_db(symbol: str) -> Optional[dict]:
 
 
 async def save_stock_price_to_db(
-    symbol: str, quote_data: dict, date: Optional[str] = None
+    symbol: str,
+    quote_data: dict,
+    date: Optional[str] = None,
+    country: Optional[str] = None,
 ) -> tuple[bool, Optional[str]]:
     """
     Supabase에 주식 종가 저장
     중복 체크 후 저장 (symbol, date 조합이 unique)
 
+    Args:
+        symbol: 종목 코드
+        quote_data: 가격 데이터
+        date: 저장할 날짜 (None이면 자동 계산)
+        country: 국가 코드 (US인 경우 어제 날짜 사용)
+
     Returns:
         tuple[bool, Optional[str]]: (성공 여부, 에러 메시지)
     """
     normalized_symbol = symbol.strip().upper()
-    target_date = date or get_today_date()
+
+    # date가 명시되지 않았을 때만 자동 계산
+    if not date:
+        if country == "US":
+            # 미국 주식은 시차 때문에 어제 날짜 사용
+            target_date = get_yesterday_date()
+        else:
+            # 그 외 국가는 오늘 날짜 사용
+            target_date = get_today_date()
+    else:
+        target_date = date
+
     response = None
 
     try:
@@ -222,7 +247,7 @@ async def save_stock_price_to_db(
         error_msg = f"JSON 디코드 오류: {str(e)}"
         logger.error(f"JSON 디코드 오류 ({symbol} 저장): {str(e)}", exc_info=True)
         if response is not None:
-            response_text = getattr(response, 'text', 'N/A')
+            response_text = getattr(response, "text", "N/A")
             logger.error(f"응답 내용: {response_text}")
             error_msg = f"{error_msg} (응답: {response_text[:200]})"
         logger.error(f"요청 데이터: {data}")
@@ -233,9 +258,12 @@ async def save_stock_price_to_db(
         logger.error(f"{symbol} 저장 실패: {str(e)}", exc_info=True)
         # Supabase 클라이언트 에러의 경우 더 구체적인 정보 추출
         error_str = str(e)
-        if hasattr(e, 'message'):
+        if hasattr(e, "message"):
             error_msg = f"Supabase 저장 실패: {e.message}"
-        elif "duplicate key" in error_str.lower() or "unique constraint" in error_str.lower():
+        elif (
+            "duplicate key" in error_str.lower()
+            or "unique constraint" in error_str.lower()
+        ):
             error_msg = f"중복 키 오류: 이미 존재하는 데이터입니다 (symbol: {symbol}, date: {target_date})"
         elif "foreign key" in error_str.lower():
             error_msg = f"외래 키 오류: 참조하는 테이블에 데이터가 없습니다"
