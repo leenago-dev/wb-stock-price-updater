@@ -2,8 +2,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# [수정 1] 시스템 의존성 보강 (curl_cffi를 위해 필수! 🌟)
-# 다른 프로젝트와 달리, 여기엔 SSL 관련 라이브러리가 꼭 필요합니다.
+# [수정 1] 시스템 의존성 보강 (SSL 관련 라이브러리)
+# yfinance 및 기타 네트워크 라이브러리를 위해 SSL 관련 라이브러리가 필요합니다.
 RUN apt-get update && apt-get install -y \
     gcc \
     curl \
