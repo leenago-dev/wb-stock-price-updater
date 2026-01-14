@@ -6,15 +6,17 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi==0.115.0",
     "uvicorn[standard]==0.32.0",
-    "yfinance==0.2.47",
+    "yfinance>=0.2.50",
     "supabase==2.10.0",
     "python-dotenv==1.0.1",
     "pydantic==2.9.2",
     "pydantic-settings==2.5.2",
-    "curl-cffi>=0.5.10",
 ]
 
 [project.scripts]
 app = "app.cli:main"
 start = "app.cli:main"
 dev = "app.cli:dev"
+
+[tool.uv]
+package = true

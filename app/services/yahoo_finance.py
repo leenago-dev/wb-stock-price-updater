@@ -2,7 +2,6 @@ import asyncio
 import yfinance as yf
 import json
 from typing import Optional
-from curl_cffi import requests as crequests
 from app.utils.rate_limiter import request_queue
 from app.config import settings
 from app.utils.logging_config import get_logger
@@ -10,18 +9,14 @@ from app.exceptions import YahooFinanceException, RateLimitException
 
 logger = get_logger(__name__)
 
-# curl_cffi 세션 생성 (Chrome 브라우저로 위장)
-# 모듈 레벨에서 한 번 생성하여 재사용
-_curl_session = crequests.Session(impersonate="chrome")
-
 
 async def fetch_with_retry(symbol: str, retry_count: int = 0) -> Optional[yf.Ticker]:
     """Yahoo Finance API에서 주식 정보를 가져오고 재시도 로직 적용"""
     try:
         # Rate limiting 적용 (yfinance는 동기 함수이므로 asyncio.to_thread로 래핑)
         async def fetch_ticker():
-            # curl_cffi 세션을 사용하여 Chrome 브라우저로 위장
-            ticker = yf.Ticker(symbol, session=_curl_session)
+            # yfinance 기본 기능 사용 (curl_cffi 제거)
+            ticker = yf.Ticker(symbol)
             # info를 호출하여 실제 API 요청 발생
             _ = ticker.info
             return ticker
@@ -51,6 +46,30 @@ async def fetch_with_retry(symbol: str, retry_count: int = 0) -> Optional[yf.Tic
             return await fetch_with_retry(symbol, retry_count + 1)
 
         raise YahooFinanceException(f"JSON 디코드 오류: {error_message}") from error
+    except AttributeError as error:
+        # 'str' object has no attribute 'name' 같은 AttributeError 처리
+        error_message = str(error)
+        logger.warning(
+            f"AttributeError 발생 (yfinance 내부 오류 가능성): {error_message} - 심볼: {symbol}"
+        )
+
+        if retry_count < settings.max_retries:
+            delay = min(
+                settings.initial_retry_delay_ms * (2**retry_count),
+                settings.max_retry_delay_ms,
+            )
+
+            logger.warning(
+                f"AttributeError로 인한 재시도. {delay}ms 후 재시도 "
+                f"({retry_count + 1}/{settings.max_retries}): {symbol}"
+            )
+
+            await asyncio.sleep(delay / 1000)
+            return await fetch_with_retry(symbol, retry_count + 1)
+
+        raise YahooFinanceException(
+            f"Yahoo Finance API 오류: {error_message}"
+        ) from error
     except Exception as error:
         error_message = str(error)
         is_rate_limit_error = (
@@ -101,7 +120,31 @@ async def get_quote_data(symbol: str) -> tuple[Optional[dict], Optional[str]]:
         # ticker.info 접근 시에도 예외가 발생할 수 있으므로 다시 시도
         try:
             info = ticker.info
-        except (json.JSONDecodeError, KeyError, AttributeError) as e:
+        except AttributeError as e:
+            # 'str' object has no attribute 'name' 같은 AttributeError 처리
+            error_msg = str(e)
+            logger.warning(
+                f"{symbol}: ticker.info 접근 시 AttributeError 발생: {error_msg}"
+            )
+            # 한 번 더 재시도
+            ticker = await fetch_with_retry(symbol)
+            if ticker is None:
+                error_reason = "재시도 후에도 Ticker 객체를 가져오지 못함"
+                logger.error(f"{symbol}: {error_reason}")
+                return None, error_reason
+            try:
+                info = ticker.info
+            except AttributeError as retry_error:
+                error_reason = f"재시도 후에도 ticker.info 접근 실패 (AttributeError): {str(retry_error)}"
+                logger.error(f"{symbol}: {error_reason}")
+                return None, error_reason
+            except Exception as retry_error:
+                error_reason = (
+                    f"재시도 후에도 ticker.info 접근 실패: {str(retry_error)}"
+                )
+                logger.error(f"{symbol}: {error_reason}")
+                return None, error_reason
+        except (json.JSONDecodeError, KeyError) as e:
             logger.warning(f"{symbol}: ticker.info 접근 실패, 재시도: {str(e)}")
             # 한 번 더 재시도
             ticker = await fetch_with_retry(symbol)
@@ -109,11 +152,24 @@ async def get_quote_data(symbol: str) -> tuple[Optional[dict], Optional[str]]:
                 error_reason = "재시도 후에도 Ticker 객체를 가져오지 못함"
                 logger.error(f"{symbol}: {error_reason}")
                 return None, error_reason
-            info = ticker.info
+            try:
+                info = ticker.info
+            except Exception as retry_error:
+                error_reason = (
+                    f"재시도 후에도 ticker.info 접근 실패: {str(retry_error)}"
+                )
+                logger.error(f"{symbol}: {error_reason}")
+                return None, error_reason
 
         # info가 None이거나 빈 딕셔너리인지 체크
-        if not info:
-            error_reason = "ticker.info가 None이거나 빈 딕셔너리"
+        if info is None:
+            error_reason = "ticker.info가 None"
+            logger.warning(f"{symbol}: {error_reason}")
+            return None, error_reason
+
+        # info가 문자열인 경우 처리 (yfinance가 때때로 문자열을 반환할 수 있음)
+        if isinstance(info, str):
+            error_reason = f"ticker.info가 문자열로 반환됨 (값: {info[:100] if len(info) > 100 else info})"
             logger.warning(f"{symbol}: {error_reason}")
             return None, error_reason
 
@@ -121,6 +177,12 @@ async def get_quote_data(symbol: str) -> tuple[Optional[dict], Optional[str]]:
             error_reason = (
                 f"ticker.info가 딕셔너리가 아님 (타입: {type(info).__name__})"
             )
+            logger.warning(f"{symbol}: {error_reason}")
+            return None, error_reason
+
+        # 빈 딕셔너리 체크
+        if not info:
+            error_reason = "ticker.info가 빈 딕셔너리"
             logger.warning(f"{symbol}: {error_reason}")
             return None, error_reason
 
@@ -158,7 +220,12 @@ async def get_quote_data(symbol: str) -> tuple[Optional[dict], Optional[str]]:
         # 커스텀 예외는 이미 로깅되었으므로 None 반환
         return None, error_reason
     except YahooFinanceException as e:
-        error_reason = f"Yahoo Finance API 오류: {str(e)}"
+        # 예외 메시지가 이미 "Yahoo Finance API 오류:"로 시작하면 중복 방지
+        error_msg = str(e)
+        if error_msg.startswith("Yahoo Finance API 오류:"):
+            error_reason = error_msg
+        else:
+            error_reason = f"Yahoo Finance API 오류: {error_msg}"
         # 커스텀 예외는 이미 로깅되었으므로 None 반환
         return None, error_reason
     except Exception as e:
