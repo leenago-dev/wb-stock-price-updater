@@ -2,7 +2,7 @@
 
 import traceback
 from typing import List, Optional, Dict
-from app.config import settings, get_stock_symbols_override
+from app.config import get_stock_symbols_override
 from app.repositories.supabase_client import (
     get_managed_stocks,
     get_today_stock_prices,
@@ -156,13 +156,16 @@ async def update_stock_prices(
             processed_count += 1
             try:
                 # 진행 상황 로그: 시작
-                logger.info(f"[{processed_count}/{total_symbols}] '{symbol}' 데이터 업데이트 시도...")
+                logger.info(
+                    f"[{processed_count}/{total_symbols}] '{symbol}' 데이터 업데이트 시도..."
+                )
 
                 # Yahoo Finance API에서 데이터 가져오기
-                quote_data = await get_quote_data(symbol)
+                quote_data, error_reason = await get_quote_data(symbol)
 
                 if not quote_data:
-                    error_msg = "가격 정보를 찾을 수 없습니다."
+                    # error_reason이 있으면 구체적인 원인 사용, 없으면 기본 메시지
+                    error_msg = error_reason or "가격 정보를 찾을 수 없습니다."
                     results.append(
                         SymbolResult(
                             symbol=symbol,

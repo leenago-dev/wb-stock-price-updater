@@ -81,10 +81,22 @@ async def fetch_with_retry(symbol: str, retry_count: int = 0) -> Optional[yf.Tic
         ) from error
 
 
-async def get_quote_data(symbol: str) -> Optional[dict]:
-    """심볼에 대한 주식 정보를 가져와서 정제된 데이터로 반환"""
+async def get_quote_data(symbol: str) -> tuple[Optional[dict], Optional[str]]:
+    """
+    심볼에 대한 주식 정보를 가져와서 정제된 데이터로 반환
+
+    Returns:
+        tuple[Optional[dict], Optional[str]]: (quote_data, error_reason)
+        - quote_data: 성공 시 가격 정보 딕셔너리, 실패 시 None
+        - error_reason: 실패 시 에러 원인 문자열, 성공 시 None
+    """
     try:
         ticker = await fetch_with_retry(symbol)
+
+        if ticker is None:
+            error_reason = "Ticker 객체를 가져오지 못함"
+            logger.error(f"{symbol}: {error_reason}")
+            return None, error_reason
 
         # ticker.info 접근 시에도 예외가 발생할 수 있으므로 다시 시도
         try:
@@ -93,7 +105,24 @@ async def get_quote_data(symbol: str) -> Optional[dict]:
             logger.warning(f"{symbol}: ticker.info 접근 실패, 재시도: {str(e)}")
             # 한 번 더 재시도
             ticker = await fetch_with_retry(symbol)
+            if ticker is None:
+                error_reason = "재시도 후에도 Ticker 객체를 가져오지 못함"
+                logger.error(f"{symbol}: {error_reason}")
+                return None, error_reason
             info = ticker.info
+
+        # info가 None이거나 빈 딕셔너리인지 체크
+        if not info:
+            error_reason = "ticker.info가 None이거나 빈 딕셔너리"
+            logger.warning(f"{symbol}: {error_reason}")
+            return None, error_reason
+
+        if not isinstance(info, dict):
+            error_reason = (
+                f"ticker.info가 딕셔너리가 아님 (타입: {type(info).__name__})"
+            )
+            logger.warning(f"{symbol}: {error_reason}")
+            return None, error_reason
 
         # 가격 정보 추출
         regular_market_price = (
@@ -103,8 +132,11 @@ async def get_quote_data(symbol: str) -> Optional[dict]:
         )
 
         if not regular_market_price:
-            logger.warning(f"{symbol}: 가격 정보를 찾을 수 없습니다.")
-            return None
+            error_reason = "가격 정보가 응답에 없음 (regularMarketPrice, currentPrice, previousClose 모두 없음)"
+            logger.warning(
+                f"{symbol}: {error_reason} - 응답 키: {list(info.keys())[:10] if info else '없음'}"
+            )
+            return None, error_reason
 
         quote_data = {
             "symbol": info.get("symbol", symbol).upper(),
@@ -114,20 +146,27 @@ async def get_quote_data(symbol: str) -> Optional[dict]:
             "changePercent": info.get("regularMarketChangePercent"),
         }
 
-        return quote_data
+        return quote_data, None
     except json.JSONDecodeError as e:
+        error_reason = f"JSON 디코드 오류: {str(e)}"
         logger.error(f"JSON 디코드 오류 ({symbol}): {str(e)}", exc_info=True)
         logger.error(f"yfinance 응답 파싱 실패 - 심볼: {symbol}")
         # JSONDecodeError는 이미 fetch_with_retry에서 재시도했으므로 여기서는 None 반환
-        return None
-    except (YahooFinanceException, RateLimitException):
+        return None, error_reason
+    except RateLimitException as e:
+        error_reason = f"Rate limit 오류 (429 Too Many Requests)"
         # 커스텀 예외는 이미 로깅되었으므로 None 반환
-        return None
+        return None, error_reason
+    except YahooFinanceException as e:
+        error_reason = f"Yahoo Finance API 오류: {str(e)}"
+        # 커스텀 예외는 이미 로깅되었으므로 None 반환
+        return None, error_reason
     except Exception as e:
         error_message = str(e)
         # Rate limit 관련 오류는 None 반환 (재시도는 이미 했음)
         if "429" in error_message or "Too Many Requests" in error_message:
+            error_reason = f"Rate limit 오류: {error_message}"
             logger.error(f"{symbol}: Rate limit 오류로 인한 실패")
-            return None
+            return None, error_reason
         logger.error(f"{symbol} 조회 실패: {error_message}", exc_info=True)
         raise YahooFinanceException(f"{symbol} 조회 실패: {error_message}") from e
