@@ -106,7 +106,7 @@ async def filter_symbols_to_fetch(
 
     # 메모리에서 비교: 수집해야 할 목록 - 이미 있는 목록 = API 호출할 목록
     symbols_to_fetch_set = all_symbols - existing_symbols
-    
+
     # symbols_to_fetch를 원래 stocks 형태로 유지 (country 정보 포함)
     stocks_to_fetch = [s for s in stocks if s["symbol"] in symbols_to_fetch_set]
 

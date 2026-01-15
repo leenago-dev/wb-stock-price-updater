@@ -3,7 +3,7 @@
 from typing import Optional
 from fastapi import HTTPException, Header
 from app.config import settings
-from app.exceptions import AuthenticationException
+
 
 async def verify_auth(authorization: Optional[str] = Header(None)) -> bool:
     """Bearer 토큰 인증"""

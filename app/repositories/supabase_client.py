@@ -37,7 +37,11 @@ async def get_managed_stocks(country: Optional[str] = None) -> List[Dict[str, st
     """
     try:
         # symbol과 country를 같이 조회해야 나중에 저장할 때 국가를 알 수 있습니다.
-        query = supabase.table("managed_stocks").select("symbol, country").eq("enabled", True)
+        query = (
+            supabase.table("managed_stocks")
+            .select("symbol, country")
+            .eq("enabled", True)
+        )
 
         # country가 있을 때만 조건을 추가합니다.
         if country:
@@ -52,8 +56,10 @@ async def get_managed_stocks(country: Optional[str] = None) -> List[Dict[str, st
         ]
 
         # 로그에는 심볼만 예쁘게 출력
-        symbols_only = [s['symbol'] for s in stocks]
-        logger.info(f"활성화된 종목 {len(stocks)}개 조회 (국가: {country}): {symbols_only}")
+        symbols_only = [s["symbol"] for s in stocks]
+        logger.info(
+            f"활성화된 종목 {len(stocks)}개 조회 (국가: {country}): {symbols_only}"
+        )
 
         return stocks
 

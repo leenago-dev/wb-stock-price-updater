@@ -175,7 +175,6 @@ def setup_exception_handlers(app):
         request: Request, exc: json.JSONDecodeError
     ):
         """JSON 디코드 오류 처리"""
-        error_message = f"JSON 디코드 오류: {str(exc)} (line {exc.lineno}, column {exc.colno})"
         logger.error(f"JSON 디코드 오류: {str(exc)}")
         logger.error(f"요청 경로: {request.url.path}")
         logger.error(f"오류 위치: line {exc.lineno}, column {exc.colno}")
