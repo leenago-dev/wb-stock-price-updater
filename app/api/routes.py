@@ -8,6 +8,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from app.api.dependencies import verify_auth
 from app.services.stock_service import update_stock_prices
+from app.services.stock_names_sync_service import sync_stock_names
+from app.services.exchange_rates_service import sync_exchange_rates, resolve_symbol
+from app.repositories.supabase_client import (
+    get_stock_name_by_symbol,
+    get_exchange_rate,
+    get_exchange_rate_history,
+)
 from app.utils.logging_config import get_logger
 from app.utils.slack_notifier import send_slack_error_log
 from app.exceptions import StockPriceUpdaterException
@@ -34,6 +41,47 @@ class UpdatePricesResponse(BaseModel):
     successCount: int
     failureCount: int
     results: List[SymbolResult]
+
+
+class SyncStocksNameRequest(BaseModel):
+    markets: Optional[List[str]] = None
+
+
+class SyncStocksNameResponse(BaseModel):
+    success: bool
+    markets: List[str]
+    uniqueSymbols: int
+    upserted: int
+    deactivated: int
+    errors: List[str]
+
+
+class StockNameResponse(BaseModel):
+    symbol: str
+    name: Optional[str] = None
+    country: Optional[str] = None
+    source: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class SyncExchangeRatesRequest(BaseModel):
+    symbols: Optional[List[str]] = None
+
+
+class SyncExchangeRatesResponse(BaseModel):
+    success: bool
+    symbols: List[str]
+    upserted: int
+    errors: List[str]
+
+
+class ExchangeRateResponse(BaseModel):
+    symbol: str
+    date: str
+    close_price: Optional[float] = None
+    adj_close_price: Optional[float] = None
+    currency: Optional[str] = None
+    name: Optional[str] = None
 
 
 @router.get("/health")
@@ -86,7 +134,157 @@ async def update_prices(
         )
     except Exception as e:
         error_message = f"배치 작업 중 오류가 발생했습니다: {str(e)}"
-        logger.error(f"배치 작업 중 예상치 못한 오류 발생: {str(e)}", exc_info=True)
+        logger.error(
+            f"배치 작업 중 예상치 못한 오류 발생: {str(error_message)}", exc_info=True
+        )
+        send_slack_error_log(None, e)
+        raise HTTPException(
+            status_code=500,
+            detail=error_message,
+        )
+
+
+@router.post("/sync-stocks-name", response_model=SyncStocksNameResponse)
+async def sync_stock_names_endpoint(
+    request_body: Optional[SyncStocksNameRequest] = Body(None),
+    _: bool = Depends(verify_auth),
+):
+    """
+    FDR StockListing으로 stock_names 테이블을 동기화합니다.
+
+    markets를 지정하지 않으면 기본값(KRX, ETF/KR, S&P500, NASDAQ, NYSE, AMEX)을 사용합니다.
+    """
+    try:
+        markets = request_body.markets if request_body else None
+        result = await sync_stock_names(markets=markets)
+        return SyncStocksNameResponse(**result)
+    except Exception as e:
+        error_message = f"stock_names 동기화 중 오류가 발생했습니다: {str(e)}"
+        logger.error(
+            f"stock_names 동기화 중 예상치 못한 오류 발생: {str(error_message)}",
+            exc_info=True,
+        )
+        send_slack_error_log(None, e)
+        raise HTTPException(
+            status_code=500,
+            detail=error_message,
+        )
+
+
+@router.get("/stocks-name/{symbol}", response_model=StockNameResponse)
+async def get_stock_name(symbol: str):
+    """
+    symbol 정확 일치로 stock_names에서 종목 정보를 조회합니다.
+    화면에서 ticker 입력 시 전체 로드 없이 1건만 조회합니다.
+    """
+    try:
+        result = await get_stock_name_by_symbol(symbol)
+        if not result:
+            raise HTTPException(
+                status_code=404, detail=f"Symbol '{symbol}' not found in stock_names"
+            )
+        return StockNameResponse(**result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_message = f"stock_names 조회 중 오류가 발생했습니다: {str(e)}"
+        logger.error(
+            f"stock_names 조회 중 예상치 못한 오류 발생: {str(error_message)}",
+            exc_info=True,
+        )
+        send_slack_error_log(None, e)
+        raise HTTPException(
+            status_code=500,
+            detail=error_message,
+        )
+
+
+@router.post("/sync-exchange-rates", response_model=SyncExchangeRatesResponse)
+async def sync_exchange_rates_endpoint(
+    request_body: Optional[SyncExchangeRatesRequest] = Body(None),
+    _: bool = Depends(verify_auth),
+):
+    """
+    FDR DataReader로 exchange_rates 테이블을 동기화합니다.
+
+    symbols를 지정하지 않으면 기본값(^NYICDX, USD/KRW, BTC/KRW, BTC/USD)을 사용합니다.
+    한국어 이름(예: "원달러환율", "달러인덱스")도 지원합니다.
+    """
+    try:
+        symbols = request_body.symbols if request_body else None
+        result = await sync_exchange_rates(symbols=symbols)
+        return SyncExchangeRatesResponse(**result)
+    except Exception as e:
+        error_message = f"exchange_rates 동기화 중 오류가 발생했습니다: {str(e)}"
+        logger.error(
+            f"exchange_rates 동기화 중 예상치 못한 오류 발생: {str(error_message)}",
+            exc_info=True,
+        )
+        send_slack_error_log(None, e)
+        raise HTTPException(
+            status_code=500,
+            detail=error_message,
+        )
+
+
+@router.get("/exchange-rates/{symbol_or_name}", response_model=ExchangeRateResponse)
+async def get_exchange_rate_endpoint(symbol_or_name: str, date: Optional[str] = None):
+    """
+    symbol 또는 한국어 이름으로 exchange_rates에서 최신 환율/인덱스 데이터를 조회합니다.
+    date 파라미터가 있으면 해당 날짜 데이터를 조회합니다.
+    """
+    try:
+        symbol = resolve_symbol(symbol_or_name)
+        result = await get_exchange_rate(symbol, date=date)
+        if not result:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Symbol '{symbol_or_name}' (resolved: '{symbol}') not found in exchange_rates",
+            )
+        return ExchangeRateResponse(**result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_message = f"exchange_rates 조회 중 오류가 발생했습니다: {str(e)}"
+        logger.error(
+            f"exchange_rates 조회 중 예상치 못한 오류 발생: {str(error_message)}",
+            exc_info=True,
+        )
+        send_slack_error_log(None, e)
+        raise HTTPException(
+            status_code=500,
+            detail=error_message,
+        )
+
+
+@router.get("/exchange-rates/{symbol_or_name}/history")
+async def get_exchange_rate_history_endpoint(
+    symbol_or_name: str,
+    start_date: str,
+    end_date: str,
+):
+    """
+    symbol 또는 한국어 이름으로 exchange_rates에서 시계열 데이터를 조회합니다.
+
+    Query Parameters:
+        start_date: 시작 날짜 (YYYY-MM-DD)
+        end_date: 종료 날짜 (YYYY-MM-DD)
+    """
+    try:
+        symbol = resolve_symbol(symbol_or_name)
+        result = await get_exchange_rate_history(symbol, start_date, end_date)
+        return {
+            "symbol": symbol,
+            "start_date": start_date,
+            "end_date": end_date,
+            "data": result,
+        }
+    except Exception as e:
+        error_message = f"exchange_rates 시계열 조회 중 오류가 발생했습니다: {str(e)}"
+        logger.error(
+            f"exchange_rates 시계열 조회 중 예상치 못한 오류 발생: {str(error_message)}",
+            exc_info=True,
+        )
         send_slack_error_log(None, e)
         raise HTTPException(
             status_code=500,
