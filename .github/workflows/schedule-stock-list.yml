@@ -4,7 +4,7 @@ name: Scheduled Stock List Sync
 on:
   schedule:
     # 매주 일요일 한국시간 새벽 4시 (UTC 기준 토요일 19:00)
-    - cron: '0 19 * * 6'
+    - cron: '0 19 1,15 * *'
   # 수동으로 실행할 수 있는 버튼 추가 (테스트용으로 필수!)
   workflow_dispatch:
 
