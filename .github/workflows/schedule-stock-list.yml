@@ -1,0 +1,20 @@
+name: Scheduled Stock List Sync
+
+# 언제 실행할지 정의
+on:
+  schedule:
+    # 매주 일요일 한국시간 새벽 4시 (UTC 기준 토요일 19:00)
+    - cron: '0 19 * * 6'
+  # 수동으로 실행할 수 있는 버튼 추가 (테스트용으로 필수!)
+  workflow_dispatch:
+
+jobs:
+  sync_stocks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Sync API
+        run: |
+          curl --fail -X POST "${{ secrets.API_URL }}/sync-stocks-name" \
+          -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+          -H "Content-Type: application/json" \
+          -d '{}'
