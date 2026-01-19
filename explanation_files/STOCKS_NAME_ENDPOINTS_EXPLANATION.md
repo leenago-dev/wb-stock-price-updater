@@ -62,12 +62,19 @@ Supabase stock_names 테이블에서 조회
 종목 정보 반환
 ```
 
+**필드 선택 조회**:
+- `?fields=name` - name 필드만 조회
+- `?fields=country` - country 필드만 조회
+- `?fields=name,country` - name과 country 필드만 조회
+- 파라미터 없으면 모든 필드 반환
+
 ### 실행 시점
 - **사용자가 심볼을 입력할 때마다** (실시간)
 
 ### 목적
 - **종목명 표시**: 사용자가 "AAPL" 입력 시 "Apple Inc." 표시
 - **자동완성**: 종목 검색 기능 지원
+- **필드 선택 조회**: 필요한 필드만 조회하여 네트워크 트래픽 최적화
 
 ---
 
@@ -150,9 +157,15 @@ Body: {}
 
 ```typescript
 // 사용자가 "AAPL" 입력
+// 모든 필드 조회
 const response = await fetch('https://api.example.com/stocks-name/AAPL');
 const data = await response.json();
-// → {"symbol": "AAPL", "name": "Apple Inc.", "country": "US"}
+// → {"symbol": "AAPL", "name": "Apple Inc.", "country": "US", ...}
+
+// name 필드만 조회 (최적화)
+const response = await fetch('https://api.example.com/stocks-name/AAPL?fields=name');
+const data = await response.json();
+// → {"symbol": "AAPL", "name": "Apple Inc."}
 
 // 화면에 표시
 displayStockName(data.name); // "Apple Inc."

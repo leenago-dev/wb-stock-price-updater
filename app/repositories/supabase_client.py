@@ -279,12 +279,15 @@ async def save_stock_price_to_db(
         return False, error_msg
 
 
-async def get_stock_name_by_symbol(symbol: str) -> Optional[dict]:
+async def get_stock_name_by_symbol(
+    symbol: str, fields: Optional[List[str]] = None
+) -> Optional[dict]:
     """
     stock_names 테이블에서 symbol로 종목 정보를 조회합니다.
 
     Args:
         symbol: 종목 심볼
+        fields: 조회할 필드 목록 (None이면 모든 필드 조회)
 
     Returns:
         Optional[dict]: 종목 정보 (없으면 None)
@@ -292,9 +295,18 @@ async def get_stock_name_by_symbol(symbol: str) -> Optional[dict]:
     normalized_symbol = symbol.strip().upper()
 
     try:
+        # fields가 지정되면 해당 필드만 조회, 없으면 모든 필드 조회
+        # symbol은 항상 포함되어야 하므로 자동으로 추가
+        if fields:
+            # symbol이 fields에 없으면 추가
+            select_fields = list(set(["symbol"] + fields))
+            select_str = ",".join(select_fields)
+        else:
+            select_str = "*"
+
         response = (
             supabase.table("stock_names")
-            .select("*")
+            .select(select_str)
             .eq("symbol", normalized_symbol)
             .limit(1)
             .execute()
@@ -302,13 +314,24 @@ async def get_stock_name_by_symbol(symbol: str) -> Optional[dict]:
 
         if response.data:
             row = response.data[0]
-            return {
-                "symbol": row["symbol"],
-                "name": row.get("name"),
-                "country": row.get("country"),
-                "source": row.get("source"),
-                "is_active": row.get("is_active"),
-            }
+            result = {"symbol": row["symbol"]}
+
+            # fields가 지정되었으면 해당 필드만, 아니면 모든 필드 반환
+            if fields:
+                for field in fields:
+                    if field in row:
+                        result[field] = row[field]
+            else:
+                result.update(
+                    {
+                        "name": row.get("name"),
+                        "country": row.get("country"),
+                        "source": row.get("source"),
+                        "is_active": row.get("is_active"),
+                    }
+                )
+
+            return result
 
         return None
     except Exception as e:

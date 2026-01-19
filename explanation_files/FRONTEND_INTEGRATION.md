@@ -129,7 +129,7 @@ gcloud run services describe stock-price-updater \
 | 메서드 | 엔드포인트 | 설명 |
 |--------|-----------|------|
 | GET | `/health` | 헬스체크 |
-| GET | `/stocks-name/{symbol}` | 종목 정보 조회 |
+| GET | `/stocks-name/{symbol}` | 종목 정보 조회 (fields 파라미터로 필드 선택 가능) |
 | GET | `/exchange-rates/{symbol_or_name}` | 환율/인덱스 조회 |
 | GET | `/exchange-rates/{symbol_or_name}/history` | 환율/인덱스 시계열 조회 |
 
@@ -192,8 +192,16 @@ export interface ExchangeRate {
 }
 
 // 종목 정보 조회
-export async function getStockName(symbol: string): Promise<StockName> {
-  const response = await fetch(`${API_BASE_URL}/stocks-name/${symbol}`);
+export async function getStockName(
+  symbol: string,
+  fields?: string[]
+): Promise<StockName> {
+  // fields 파라미터가 있으면 쿼리 스트링에 추가
+  const fieldsParam = fields && fields.length > 0
+    ? `?fields=${fields.join(',')}`
+    : '';
+
+  const response = await fetch(`${API_BASE_URL}/stocks-name/${symbol}${fieldsParam}`);
   if (!response.ok) {
     throw new Error(`Failed to fetch stock name: ${response.statusText}`);
   }
@@ -202,10 +210,10 @@ export async function getStockName(symbol: string): Promise<StockName> {
 
 // 환율 조회
 export async function getExchangeRate(symbolOrName: string, date?: string): Promise<ExchangeRate> {
-  const url = date 
+  const url = date
     ? `${API_BASE_URL}/exchange-rates/${symbolOrName}?date=${date}`
     : `${API_BASE_URL}/exchange-rates/${symbolOrName}`;
-  
+
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Failed to fetch exchange rate: ${response.statusText}`);
@@ -278,7 +286,58 @@ export default function ExchangeRateDisplay({ symbol }: { symbol: string }) {
 }
 ```
 
-### 5.2. 한국어 이름으로 조회 예시
+### 5.2. 종목 정보 조회 예시 (fields 파라미터 사용)
+
+```tsx
+// components/StockNameDisplay.tsx
+'use client';
+
+import { useState, useEffect } from 'react';
+import { getStockName } from '@/lib/api';
+
+export default function StockNameDisplay({ symbol }: { symbol: string }) {
+  const [stock, setStock] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchStock() {
+      try {
+        // name 필드만 조회 (최적화)
+        const data = await getStockName(symbol, ['name']);
+        setStock(data);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchStock();
+  }, [symbol]);
+
+  if (loading) return <div>Loading...</div>;
+  if (!stock) return <div>Not found</div>;
+
+  return (
+    <div>
+      <h2>{stock.symbol}</h2>
+      <p>종목명: {stock.name}</p>
+    </div>
+  );
+}
+
+// 사용 예시
+<StockNameDisplay symbol="AAPL" />
+
+// 모든 필드 조회
+const allData = await getStockName('AAPL');
+
+// 특정 필드만 조회 (네트워크 최적화)
+const nameOnly = await getStockName('AAPL', ['name']);
+const nameAndCountry = await getStockName('AAPL', ['name', 'country']);
+```
+
+### 5.3. 한국어 이름으로 조회 예시
 
 ```tsx
 // "원달러환율"이라는 한글 이름으로 조회 가능
@@ -287,7 +346,7 @@ export default function ExchangeRateDisplay({ symbol }: { symbol: string }) {
 <ExchangeRateDisplay symbol="USD/KRW" />
 ```
 
-### 5.3. 시계열 차트 예시
+### 5.4. 시계열 차트 예시
 
 ```tsx
 // components/ExchangeRateChart.tsx
@@ -307,7 +366,7 @@ export default function ExchangeRateChart({ symbol }: { symbol: string }) {
       const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
         .toISOString()
         .split('T')[0];
-      
+
       try {
         const history = await getExchangeRateHistory(symbol, startDate, endDate);
         setData(history);

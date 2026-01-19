@@ -47,15 +47,15 @@ determine_symbols()
     ├─ Request Body의 symbols가 있으면 → 사용
     ├─ 없으면 환경변수 STOCK_SYMBOLS 확인
     └─ 없으면 DB (managed_stocks) 조회
-       └─ SELECT symbol, country 
-          FROM managed_stocks 
+       └─ SELECT symbol, country
+          FROM managed_stocks
           WHERE enabled = true
     ↓
 [3단계: 중복 제거 (N+1 문제 방지)]
 filter_symbols_to_fetch()
     ├─ 모든 심볼의 오늘 날짜 데이터를 한 번에 조회
-    │  └─ SELECT * FROM stock_prices 
-    │     WHERE date = '2025-01-15' 
+    │  └─ SELECT * FROM stock_prices
+    │     WHERE date = '2025-01-15'
     │       AND symbol IN ('AAPL', 'MSFT', ...)
     │
     └─ 메모리에서 비교
@@ -231,7 +231,7 @@ curl -X POST http://localhost:8080/sync-stocks-name \
 ## 3. GET /stocks-name/{symbol}
 
 ### 목적
-특정 심볼의 종목 정보(이름, 국가, 소스 등)를 조회합니다.
+특정 심볼의 종목 정보(이름, 국가, 소스 등)를 조회합니다. 필요한 필드만 선택적으로 조회할 수 있습니다.
 
 ### 인증
 **불필요** (공개 API)
@@ -239,23 +239,54 @@ curl -X POST http://localhost:8080/sync-stocks-name \
 ### 요청 형식
 
 ```http
-GET /stocks-name/{symbol}
+GET /stocks-name/{symbol}?fields={field1},{field2}
 ```
 
+**Query Parameters**:
+- `fields` (선택사항): 조회할 필드 목록을 쉼표로 구분
+  - 지정하지 않으면 모든 필드 반환
+  - 예: `?fields=name`, `?fields=country`, `?fields=name,country`
+  - `symbol`은 항상 포함됩니다 (식별자이므로 필수)
+
 **예시**:
-- `GET /stocks-name/AAPL`
-- `GET /stocks-name/005930`
+- `GET /stocks-name/AAPL` - 모든 필드 조회
+- `GET /stocks-name/AAPL?fields=name` - name 필드만 조회
+- `GET /stocks-name/AAPL?fields=country` - country 필드만 조회
+- `GET /stocks-name/AAPL?fields=name,country` - name과 country 필드만 조회
+- `GET /stocks-name/005930` - 모든 필드 조회
 
 ### 동작 과정
 
 ```
 [1단계: 요청 수신]
+GET /stocks-name/AAPL?fields=name,country
+    ↓
+[2단계: 필드 파싱]
+fields = ["name", "country"]
+    ↓
+[3단계: Supabase 조회]
+get_stock_name_by_symbol("AAPL", fields=["name", "country"])
+    └─ SELECT symbol, name, country
+       FROM stock_names
+       WHERE symbol = 'AAPL'
+       LIMIT 1
+    ↓
+[4단계: 응답 반환]
+{
+  "symbol": "AAPL",
+  "name": "Apple Inc.",
+  "country": "US"
+}
+```
+
+**fields 파라미터 없을 경우**:
+```
+[1단계: 요청 수신]
 GET /stocks-name/AAPL
     ↓
 [2단계: Supabase 조회]
-get_stock_name_by_symbol("AAPL")
-    └─ SELECT symbol, name, country, source, is_active, 
-              asset_type, currency, fdr_symbol
+get_stock_name_by_symbol("AAPL", fields=None)
+    └─ SELECT *
        FROM stock_names
        WHERE symbol = 'AAPL'
        LIMIT 1
@@ -277,15 +308,41 @@ get_stock_name_by_symbol("AAPL")
 - **빠른 조회**: symbol unique 인덱스로 즉시 조회
 - **메타데이터 제공**: 종목명, 국가, 통화 등 정보 제공
 - **활성 상태 확인**: `is_active`로 수집 대상 여부 확인
+- **필드 선택 조회**: `fields` 파라미터로 필요한 필드만 조회 가능 (네트워크 트래픽 최적화)
+- **항상 symbol 포함**: `symbol`은 식별자이므로 항상 응답에 포함됩니다
 
 ### 예시
 
-**요청**:
+**모든 필드 조회**:
 ```bash
 curl http://localhost:8080/stocks-name/AAPL
 ```
 
-**응답**:
+**name 필드만 조회**:
+```bash
+curl "http://localhost:8080/stocks-name/AAPL?fields=name"
+```
+
+**country 필드만 조회**:
+```bash
+curl "http://localhost:8080/stocks-name/AAPL?fields=country"
+```
+
+**name과 country 필드만 조회**:
+```bash
+curl "http://localhost:8080/stocks-name/AAPL?fields=name,country"
+```
+
+**응답 (fields=name,country)**:
+```json
+{
+  "symbol": "AAPL",
+  "name": "Apple Inc.",
+  "country": "US"
+}
+```
+
+**응답 (fields 없음 - 모든 필드)**:
 ```json
 {
   "symbol": "AAPL",
@@ -344,7 +401,7 @@ sync_exchange_rates()
     ├─ Request Body의 symbols가 있으면 → 사용
     └─ 없으면 DB에서 조회
        └─ get_active_exchange_rate_symbols()
-          └─ SELECT symbol 
+          └─ SELECT symbol
              FROM stock_names
              WHERE asset_type IN ('FX', 'CRYPTO', 'INDEX')
                AND is_active = true
@@ -359,7 +416,7 @@ asyncio.gather()로 모든 심볼 동시 처리
     └─ process_symbol(symbol)
        ├─ [4-1] 최근 날짜 조회 (증분 수집)
        │  └─ get_max_date(symbol)
-       │     └─ SELECT MAX(date) 
+       │     └─ SELECT MAX(date)
        │        FROM exchange_rates
        │        WHERE symbol = 'USD/KRW'
        │     → 예: "2025-01-14"
@@ -473,7 +530,7 @@ resolve_symbol("원달러환율")
 [3단계: Supabase 조회]
 get_exchange_rate("USD/KRW", date=None)
     └─ date가 없으면 최신 데이터 조회
-       └─ SELECT * 
+       └─ SELECT *
           FROM exchange_rates
           WHERE symbol = 'USD/KRW'
           ORDER BY date DESC
@@ -561,7 +618,7 @@ resolve_symbol("원달러환율")
     ↓
 [3단계: Supabase 조회]
 get_exchange_rate_history("USD/KRW", "2025-01-01", "2025-01-15")
-    └─ SELECT * 
+    └─ SELECT *
        FROM exchange_rates
        WHERE symbol = 'USD/KRW'
          AND date >= '2025-01-01'
@@ -754,6 +811,6 @@ GET /exchange-rates/원달러환율/history?start_date=2024-12-15&end_date=2025-
 
 ---
 
-**문서 버전**: 1.0  
-**최종 업데이트**: 2025-01-15  
+**문서 버전**: 1.0
+**최종 업데이트**: 2025-01-15
 **작성 목적**: 각 API 엔드포인트의 상세한 동작 방식을 단계별로 설명

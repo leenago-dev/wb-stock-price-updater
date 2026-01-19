@@ -172,13 +172,26 @@ async def sync_stock_names_endpoint(
 
 
 @router.get("/stocks-name/{symbol}", response_model=StockNameResponse)
-async def get_stock_name(symbol: str):
+async def get_stock_name(symbol: str, fields: Optional[str] = None):
     """
     symbol 정확 일치로 stock_names에서 종목 정보를 조회합니다.
     화면에서 ticker 입력 시 전체 로드 없이 1건만 조회합니다.
+
+    Query Parameters:
+        fields: 조회할 필드 목록 (쉼표로 구분, 예: "name,country")
+                지정하지 않으면 모든 필드 반환
+                예시:
+                  - ?fields=name -> name 필드만
+                  - ?fields=country -> country 필드만
+                  - ?fields=name,country -> name과 country 필드만
     """
     try:
-        result = await get_stock_name_by_symbol(symbol)
+        # fields 쿼리 파라미터를 리스트로 변환
+        fields_list = None
+        if fields:
+            fields_list = [f.strip() for f in fields.split(",") if f.strip()]
+
+        result = await get_stock_name_by_symbol(symbol, fields=fields_list)
         if not result:
             raise HTTPException(
                 status_code=404, detail=f"Symbol '{symbol}' not found in stock_names"
