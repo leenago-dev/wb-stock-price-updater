@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from app.api.dependencies import verify_auth
 from app.services.stock_service import update_stock_prices
-from app.services.stock_names_sync_service import sync_stock_names
+from app.services.listings.fdr_listings import sync_stock_names
 from app.services.exchange_rates_service import sync_exchange_rates, resolve_symbol
 from app.repositories.supabase_client import (
     get_stock_name_by_symbol,

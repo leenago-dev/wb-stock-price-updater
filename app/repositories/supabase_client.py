@@ -277,3 +277,394 @@ async def save_stock_price_to_db(
             error_msg = f"권한 오류: Supabase 인증 실패"
         send_slack_error_log(symbol, e)
         return False, error_msg
+
+
+async def get_stock_name_by_symbol(symbol: str) -> Optional[dict]:
+    """
+    stock_names 테이블에서 symbol로 종목 정보를 조회합니다.
+
+    Args:
+        symbol: 종목 심볼
+
+    Returns:
+        Optional[dict]: 종목 정보 (없으면 None)
+    """
+    normalized_symbol = symbol.strip().upper()
+
+    try:
+        response = (
+            supabase.table("stock_names")
+            .select("*")
+            .eq("symbol", normalized_symbol)
+            .limit(1)
+            .execute()
+        )
+
+        if response.data:
+            row = response.data[0]
+            return {
+                "symbol": row["symbol"],
+                "name": row.get("name"),
+                "country": row.get("country"),
+                "source": row.get("source"),
+                "is_active": row.get("is_active"),
+            }
+
+        return None
+    except Exception as e:
+        logger.error(f"stock_names 조회 실패 ({symbol}): {str(e)}", exc_info=True)
+        return None
+
+
+async def upsert_stock_names(records: List[dict]) -> tuple[int, Optional[str]]:
+    """
+    stock_names 테이블에 대량 upsert를 수행합니다.
+
+    Args:
+        records: upsert할 레코드 리스트
+
+    Returns:
+        tuple[int, Optional[str]]: (upsert된 개수, 에러 메시지)
+    """
+    if not records:
+        return 0, None
+
+    try:
+        response = (
+            supabase.table("stock_names")
+            .upsert(records, on_conflict="symbol")
+            .execute()
+        )
+
+        upserted = len(response.data) if response.data else 0
+        logger.info(f"stock_names {upserted}개 레코드 upsert 완료")
+        return upserted, None
+    except Exception as e:
+        error_msg = f"stock_names upsert 실패: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        send_slack_error_log(None, e)
+        return 0, error_msg
+
+
+async def get_active_stock_symbols_by_country(
+    country: Optional[str] = None,
+) -> List[str]:
+    """
+    stock_names 테이블에서 활성화된 심볼 목록을 조회합니다.
+
+    Args:
+        country: 국가 코드 (None이면 전체)
+
+    Returns:
+        List[str]: 활성화된 심볼 리스트
+    """
+    try:
+        query = supabase.table("stock_names").select("symbol").eq("is_active", True)
+
+        if country:
+            query = query.eq("country", country)
+
+        response = query.execute()
+
+        symbols = [row["symbol"] for row in response.data]
+        logger.info(f"활성화된 종목 {len(symbols)}개 조회 (국가: {country})")
+        return symbols
+    except Exception as e:
+        logger.error(f"활성화된 종목 조회 실패: {str(e)}", exc_info=True)
+        return []
+
+
+async def deactivate_missing_stocks(
+    symbols: List[str], country: Optional[str] = None
+) -> int:
+    """
+    stock_names 테이블에서 지정된 심볼 목록에 없는 활성화된 종목을 비활성화합니다.
+
+    Args:
+        symbols: 유지할 심볼 목록
+        country: 국가 코드 (None이면 전체)
+
+    Returns:
+        int: 비활성화된 종목 수
+    """
+    if not symbols:
+        return 0
+
+    try:
+        # 활성화된 종목 중에서 symbols에 없는 것들을 찾기
+        active_symbols = await get_active_stock_symbols_by_country(country)
+        symbols_set = set(s.upper() for s in symbols)
+        missing_symbols = [s for s in active_symbols if s not in symbols_set]
+
+        if not missing_symbols:
+            return 0
+
+        # 비활성화
+        response = (
+            supabase.table("stock_names")
+            .update({"is_active": False})
+            .in_("symbol", missing_symbols)
+            .execute()
+        )
+
+        deactivated = len(missing_symbols)
+        logger.info(f"stock_names {deactivated}개 종목 비활성화 완료")
+        return deactivated
+    except Exception as e:
+        logger.error(f"종목 비활성화 실패: {str(e)}", exc_info=True)
+        send_slack_error_log(None, e)
+        return 0
+
+
+async def get_exchange_rate(symbol: str, date: Optional[str] = None) -> Optional[dict]:
+    """
+    exchange_rates 테이블에서 환율/인덱스 데이터를 조회합니다.
+
+    Args:
+        symbol: 심볼
+        date: 날짜 (None이면 가장 최근 날짜)
+
+    Returns:
+        Optional[dict]: 환율 데이터 (없으면 None)
+    """
+    try:
+        query = supabase.table("exchange_rates").select("*").eq("symbol", symbol)
+
+        if date:
+            query = query.eq("date", date)
+        else:
+            query = query.order("date", desc=True).limit(1)
+
+        response = query.execute()
+
+        if response.data:
+            row = response.data[0]
+            return {
+                "symbol": row["symbol"],
+                "date": row["date"],
+                "close_price": float(row["close_price"]),
+                "adj_close_price": (
+                    float(row["adj_close_price"])
+                    if row.get("adj_close_price")
+                    else None
+                ),
+                "currency": row.get("currency"),
+                "name": row.get("name"),
+            }
+
+        return None
+    except Exception as e:
+        logger.error(f"exchange_rates 조회 실패 ({symbol}): {str(e)}", exc_info=True)
+        return None
+
+
+async def get_exchange_rate_history(
+    symbol: str, start_date: str, end_date: str
+) -> List[dict]:
+    """
+    exchange_rates 테이블에서 시계열 데이터를 조회합니다.
+
+    Args:
+        symbol: 심볼
+        start_date: 시작 날짜 (YYYY-MM-DD)
+        end_date: 종료 날짜 (YYYY-MM-DD)
+
+    Returns:
+        List[dict]: 시계열 데이터 리스트
+    """
+    try:
+        response = (
+            supabase.table("exchange_rates")
+            .select("*")
+            .eq("symbol", symbol)
+            .gte("date", start_date)
+            .lte("date", end_date)
+            .order("date", desc=False)
+            .execute()
+        )
+
+        result = []
+        for row in response.data:
+            result.append(
+                {
+                    "date": row["date"],
+                    "close_price": float(row["close_price"]),
+                    "adj_close_price": (
+                        float(row["adj_close_price"])
+                        if row.get("adj_close_price")
+                        else None
+                    ),
+                    "currency": row.get("currency"),
+                    "name": row.get("name"),
+                }
+            )
+
+        return result
+    except Exception as e:
+        logger.error(
+            f"exchange_rates 시계열 조회 실패 ({symbol}): {str(e)}", exc_info=True
+        )
+        return []
+
+
+# 심볼 캐시 (메모리)
+SYMBOL_CACHE: Dict[str, str] = {}
+
+
+async def load_symbol_cache() -> None:
+    """
+    서버 시작 시 stock_names 테이블에서 심볼 캐시를 로드합니다.
+    이름→심볼, 심볼→심볼 매핑을 메모리에 저장합니다.
+    """
+    try:
+        response = (
+            supabase.table("stock_names")
+            .select("symbol, name")
+            .eq("is_active", True)
+            .execute()
+        )
+
+        SYMBOL_CACHE.clear()
+        for row in response.data:
+            symbol = row["symbol"]
+            name = row.get("name")
+
+            # 심볼 → 심볼 매핑
+            SYMBOL_CACHE[symbol] = symbol
+
+            # 이름 → 심볼 매핑
+            if name:
+                SYMBOL_CACHE[name] = symbol
+
+        logger.info(f"심볼 캐시 로드 완료: {len(SYMBOL_CACHE)}개 항목")
+    except Exception as e:
+        logger.error(f"심볼 캐시 로드 실패: {str(e)}", exc_info=True)
+
+
+def resolve_symbol_from_cache(name_or_symbol: str) -> str:
+    """
+    SYMBOL_CACHE에서 심볼을 조회합니다.
+    없으면 입력값을 그대로 반환합니다.
+
+    Args:
+        name_or_symbol: 한국어 이름 또는 심볼
+
+    Returns:
+        str: 변환된 심볼 (없으면 입력값 그대로)
+    """
+    return SYMBOL_CACHE.get(name_or_symbol, name_or_symbol)
+
+
+async def get_max_date(symbol: str) -> Optional[str]:
+    """
+    exchange_rates 테이블에서 특정 심볼의 최대 날짜를 조회합니다.
+    증분 수집 최적화에 사용됩니다.
+
+    Args:
+        symbol: 심볼
+
+    Returns:
+        Optional[str]: 최대 날짜 (YYYY-MM-DD 형식, 없으면 None)
+    """
+    try:
+        response = (
+            supabase.table("exchange_rates")
+            .select("date")
+            .eq("symbol", symbol)
+            .order("date", desc=True)
+            .limit(1)
+            .execute()
+        )
+
+        if response.data:
+            return response.data[0]["date"]
+        return None
+    except Exception as e:
+        logger.error(f"최대 날짜 조회 실패 ({symbol}): {str(e)}", exc_info=True)
+        return None
+
+
+async def upsert_exchange_rates(records: List[dict]) -> tuple[int, Optional[str]]:
+    """
+    exchange_rates 테이블에 대량 upsert를 수행합니다.
+
+    Args:
+        records: upsert할 레코드 리스트
+
+    Returns:
+        tuple[int, Optional[str]]: (upsert된 개수, 에러 메시지)
+    """
+    if not records:
+        return 0, None
+
+    try:
+        response = (
+            supabase.table("exchange_rates")
+            .upsert(records, on_conflict="symbol,date")
+            .execute()
+        )
+
+        upserted = len(response.data) if response.data else 0
+        logger.info(f"exchange_rates {upserted}개 레코드 upsert 완료")
+        return upserted, None
+    except Exception as e:
+        error_msg = f"exchange_rates upsert 실패: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        send_slack_error_log(None, e)
+        return 0, error_msg
+
+
+async def get_active_exchange_rate_symbols() -> List[str]:
+    """
+    stock_names 테이블에서 활성화된 환율/인덱스 심볼 목록을 조회합니다.
+
+    Returns:
+        List[str]: 활성화된 심볼 리스트
+    """
+    try:
+        response = (
+            supabase.table("stock_names")
+            .select("symbol")
+            .eq("is_active", True)
+            .in_("asset_type", ["FX", "CRYPTO", "INDEX"])
+            .execute()
+        )
+
+        symbols = [row["symbol"] for row in response.data]
+        logger.info(f"활성화된 환율/인덱스 심볼 {len(symbols)}개 조회")
+        return symbols
+    except Exception as e:
+        logger.error(f"활성화된 환율/인덱스 심볼 조회 실패: {str(e)}", exc_info=True)
+        return []
+
+
+async def get_symbol_metadata(symbol: str) -> Optional[dict]:
+    """
+    stock_names 테이블에서 심볼 메타데이터를 조회합니다.
+
+    Args:
+        symbol: 심볼
+
+    Returns:
+        Optional[dict]: 메타데이터 (name, currency 등, 없으면 None)
+    """
+    try:
+        response = (
+            supabase.table("stock_names")
+            .select("name, currency")
+            .eq("symbol", symbol)
+            .eq("is_active", True)
+            .limit(1)
+            .execute()
+        )
+
+        if response.data:
+            row = response.data[0]
+            return {
+                "name": row.get("name"),
+                "currency": row.get("currency"),
+            }
+        return None
+    except Exception as e:
+        logger.error(f"심볼 메타데이터 조회 실패 ({symbol}): {str(e)}", exc_info=True)
+        return None
