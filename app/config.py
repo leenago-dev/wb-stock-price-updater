@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # Slack Webhook 설정 (선택사항)
     slack_webhook_url: Optional[str] = None
 
+    # CORS 설정 (선택사항, 쉼표로 구분된 도메인 목록)
+    allowed_origins: Optional[str] = None
+
     # Rate Limiting 설정
     min_request_delay_ms: int = 200
     max_concurrent_requests: int = 3

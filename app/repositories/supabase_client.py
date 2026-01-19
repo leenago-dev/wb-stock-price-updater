@@ -298,8 +298,8 @@ async def get_stock_name_by_symbol(
         # fields가 지정되면 해당 필드만 조회, 없으면 모든 필드 조회
         # symbol은 항상 포함되어야 하므로 자동으로 추가
         if fields:
-            # symbol이 fields에 없으면 추가
-            select_fields = list(set(["symbol"] + fields))
+            # symbol이 fields에 없으면 추가 (순서 보장)
+            select_fields = ["symbol"] + [f for f in fields if f != "symbol"]
             select_str = ",".join(select_fields)
         else:
             select_str = "*"
