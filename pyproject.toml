@@ -22,4 +22,4 @@ start = "app.cli:main"
 dev = "app.cli:dev"
 
 [tool.uv]
-package = true
+package = false
