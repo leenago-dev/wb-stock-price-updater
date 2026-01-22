@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Dict, List, Optional
+from collections import defaultdict
+from typing import Any, Dict, List, Optional
 
 import FinanceDataReader as fdr
 import pandas as pd
@@ -29,6 +30,12 @@ MARKET_TO_COUNTRY = {
     "NASDAQ": "US",
     "NYSE": "US",
     "AMEX": "US",
+}
+
+# 국가별 통화 매핑
+COUNTRY_TO_CURRENCY: Dict[str, str] = {
+    "US": "USD",
+    "KR": "KRW",
 }
 
 
@@ -70,6 +77,9 @@ async def fetch_and_normalize_market(market: str) -> List[dict]:
         # 국가 코드 결정
         country = MARKET_TO_COUNTRY.get(market)
 
+        # 국가별 통화 코드 결정
+        currency = COUNTRY_TO_CURRENCY.get(country) if country else None
+
         # 정규화
         records = []
         for _, row in df.iterrows():
@@ -84,6 +94,7 @@ async def fetch_and_normalize_market(market: str) -> List[dict]:
                     "symbol": symbol,
                     "name": name,
                     "country": country,
+                    "currency": currency,
                     "source": "FDR",
                     "is_active": True,
                     "asset_type": "STOCK",
@@ -110,15 +121,13 @@ def _partition_by_country(records: List[dict]) -> Dict[Optional[str], List[dict]
     Returns:
         Dict[Optional[str], List[dict]]: country별로 그룹핑된 레코드
     """
-    partitioned: Dict[Optional[str], List[dict]] = {}
+    partitioned: Dict[Optional[str], List[dict]] = defaultdict(list)
 
     for record in records:
         country = record.get("country")
-        if country not in partitioned:
-            partitioned[country] = []
         partitioned[country].append(record)
 
-    return partitioned
+    return dict(partitioned)
 
 
 def _deduplicate_by_symbol(records: List[dict]) -> List[dict]:
@@ -139,7 +148,7 @@ def _deduplicate_by_symbol(records: List[dict]) -> List[dict]:
     return list(seen.values())
 
 
-async def sync_stock_names(markets: Optional[List[str]] = None) -> Dict:
+async def sync_stock_names(markets: Optional[List[str]] = None) -> Dict[str, Any]:
     """
     FDR StockListing으로 stock_names 테이블을 동기화합니다.
 
