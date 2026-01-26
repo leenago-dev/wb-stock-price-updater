@@ -10,6 +10,7 @@ from app.api.dependencies import verify_auth
 from app.services.stock_service import update_stock_prices
 from app.services.listings.fdr_listings import sync_stock_names
 from app.services.exchange_rates_service import sync_exchange_rates, resolve_symbol
+from app.services.apt_sales_service import sync_apt_sales
 from app.repositories.supabase_client import (
     get_stock_name_by_symbol,
     get_exchange_rate,
@@ -82,6 +83,21 @@ class ExchangeRateResponse(BaseModel):
     adj_close_price: Optional[float] = None
     currency: Optional[str] = None
     name: Optional[str] = None
+
+
+class SyncAptSalesRequest(BaseModel):
+    lawd_codes: Optional[List[str]] = None
+    deal_ym: Optional[str] = None
+    priority: Optional[int] = 1
+
+
+class SyncAptSalesResponse(BaseModel):
+    success: bool
+    total: int
+    upserted: int
+    lawd_codes: List[str]
+    deal_months: List[str]
+    errors: List[str]
 
 
 @router.get("/health")
@@ -296,6 +312,59 @@ async def get_exchange_rate_history_endpoint(
         error_message = f"exchange_rates 시계열 조회 중 오류가 발생했습니다: {str(e)}"
         logger.error(
             f"exchange_rates 시계열 조회 중 예상치 못한 오류 발생: {str(error_message)}",
+            exc_info=True,
+        )
+        send_slack_error_log(None, e)
+        raise HTTPException(
+            status_code=500,
+            detail=error_message,
+        )
+
+
+@router.post("/sync-apt-sales", response_model=SyncAptSalesResponse)
+async def sync_apt_sales_endpoint(
+    request_body: Optional[SyncAptSalesRequest] = Body(None),
+    _: bool = Depends(verify_auth),
+):
+    """
+    공공데이터포털 API로 아파트 실거래가 데이터를 수집하여 apt_sales 테이블에 저장합니다.
+
+    lawd_codes를 지정하지 않으면 DB의 bjd_code 테이블에서 priority 기준으로 조회합니다.
+    deal_ym을 지정하지 않으면 이번 달과 지난달 데이터를 수집합니다.
+
+    Request Body (선택사항):
+        lawd_codes: 법정동코드 리스트 (예: ["11110", "11140"]) - 지정 시 priority 무시
+        deal_ym: 거래연월 YYYYMM (예: "202501")
+        priority: 우선순위 필터 (1=최우선만, 2=중요까지, 3=일반까지) - 기본값 1
+
+    Response:
+        success: 전체 성공 여부
+        total: 수집된 총 레코드 수
+        upserted: Supabase에 저장된 레코드 수
+        lawd_codes: 처리된 법정동코드 리스트
+        deal_months: 처리된 연월 리스트
+        errors: 에러 메시지 리스트
+
+    예시:
+        - 기본 (1순위만): POST {} 또는 {"priority": 1}
+        - 1~2순위: POST {"priority": 2}
+        - 특정 지역: POST {"lawd_codes": ["11110"]}
+    """
+    try:
+        lawd_codes = request_body.lawd_codes if request_body else None
+        deal_ym = request_body.deal_ym if request_body else None
+        priority = request_body.priority if request_body else 1
+
+        result = await sync_apt_sales(
+            lawd_codes=lawd_codes,
+            deal_ym=deal_ym,
+            priority=priority
+        )
+        return SyncAptSalesResponse(**result)
+    except Exception as e:
+        error_message = f"아파트 실거래가 동기화 중 오류가 발생했습니다: {str(e)}"
+        logger.error(
+            f"아파트 실거래가 동기화 중 예상치 못한 오류 발생: {str(error_message)}",
             exc_info=True,
         )
         send_slack_error_log(None, e)
