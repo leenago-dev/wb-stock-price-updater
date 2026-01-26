@@ -95,6 +95,8 @@ class SyncAptSalesResponse(BaseModel):
     success: bool
     total: int
     upserted: int
+    new: int  # 신규 데이터 개수
+    updated: int  # 업데이트된 데이터 개수
     lawd_codes: List[str]
     deal_months: List[str]
     errors: List[str]
@@ -356,9 +358,7 @@ async def sync_apt_sales_endpoint(
         priority = request_body.priority if request_body else 1
 
         result = await sync_apt_sales(
-            lawd_codes=lawd_codes,
-            deal_ym=deal_ym,
-            priority=priority
+            lawd_codes=lawd_codes, deal_ym=deal_ym, priority=priority
         )
         return SyncAptSalesResponse(**result)
     except Exception as e:

@@ -763,7 +763,7 @@ async def get_locatadd_nm(lawd_code: str) -> Optional[str]:
         return None
 
 
-async def upsert_apt_sales(records: List[dict]) -> tuple[int, Optional[str]]:
+async def upsert_apt_sales(records: List[dict]) -> tuple[int, int, int, Optional[str]]:
     """
     apt_sales 테이블에 대량 upsert를 수행합니다.
 
@@ -771,21 +771,43 @@ async def upsert_apt_sales(records: List[dict]) -> tuple[int, Optional[str]]:
         records: upsert할 레코드 리스트
 
     Returns:
-        tuple[int, Optional[str]]: (upsert된 개수, 에러 메시지)
+        tuple[int, int, int, Optional[str]]: (전체 개수, 신규 개수, 업데이트 개수, 에러 메시지)
     """
     if not records:
-        return 0, None
+        return 0, 0, 0, None
 
     try:
+        # 1. 기존 데이터 확인 (ID 목록으로 조회)
+        record_ids = [record["id"] for record in records]
+
+        # ID 목록을 100개씩 나누어 조회 (Supabase 제약)
+        existing_ids = set()
+        batch_size = 100
+        for i in range(0, len(record_ids), batch_size):
+            batch_ids = record_ids[i : i + batch_size]
+            response = (
+                supabase.table("apt_sales").select("id").in_("id", batch_ids).execute()
+            )
+            if response.data:
+                existing_ids.update(row["id"] for row in response.data)
+
+        # 2. 신규/업데이트 구분
+        new_count = len([r for r in records if r["id"] not in existing_ids])
+        update_count = len([r for r in records if r["id"] in existing_ids])
+
+        # 3. Upsert 실행
         response = (
             supabase.table("apt_sales").upsert(records, on_conflict="id").execute()
         )
 
-        upserted = len(response.data) if response.data else 0
-        logger.info(f"apt_sales {upserted}개 레코드 upsert 완료")
-        return upserted, None
+        total = len(response.data) if response.data else 0
+        logger.info(
+            f"apt_sales upsert 완료: 전체 {total}개 "
+            f"(신규 {new_count}개, 업데이트 {update_count}개)"
+        )
+        return total, new_count, update_count, None
     except Exception as e:
         error_msg = f"apt_sales upsert 실패: {str(e)}"
         logger.error(error_msg, exc_info=True)
         send_slack_error_log(None, e)
-        return 0, error_msg
+        return 0, 0, 0, error_msg

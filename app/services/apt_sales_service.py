@@ -343,14 +343,22 @@ async def sync_apt_sales(
 
         # 6. 한 번에 Upsert
         upsert_total = 0
+        new_count = 0
+        update_count = 0
+
         if final_records:
-            upserted, upsert_error = await upsert_apt_sales(final_records)
+            upserted, new, updated, upsert_error = await upsert_apt_sales(final_records)
             upsert_total = upserted
+            new_count = new
+            update_count = updated
 
             if upsert_error:
                 errors.append(f"Upsert 실패: {upsert_error}")
             else:
-                logger.info(f"{upserted}개 레코드 Upsert 완료")
+                logger.info(
+                    f"Upsert 완료: 전체 {upserted}개 "
+                    f"(신규 {new}개, 업데이트 {updated}개)"
+                )
         else:
             logger.warning("저장할 데이터가 없습니다")
 
@@ -359,6 +367,8 @@ async def sync_apt_sales(
             "success": len(errors) == 0,
             "total": total_records,
             "upserted": upsert_total,
+            "new": new_count,
+            "updated": update_count,
             "lawd_codes": target_lawd_codes,
             "deal_months": target_months,
             "errors": errors,
