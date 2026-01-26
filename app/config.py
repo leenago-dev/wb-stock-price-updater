@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     # 인증
     cron_secret: str
 
+    # 공공데이터포털 API 키
+    data_go_api_key: str
+
     # 오버라이드용 심볼 목록 (선택사항)
     stock_symbols: Optional[str] = None
 

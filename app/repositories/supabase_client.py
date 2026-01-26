@@ -691,3 +691,123 @@ async def get_symbol_metadata(symbol: str) -> Optional[dict]:
     except Exception as e:
         logger.error(f"심볼 메타데이터 조회 실패 ({symbol}): {str(e)}", exc_info=True)
         return None
+
+
+async def get_bjd_codes(
+    lawd_codes: Optional[List[str]] = None, priority: Optional[int] = 1
+) -> List[str]:
+    """
+    bjd_code 테이블에서 법정동코드(region_cd_5) 목록을 조회합니다.
+
+    Args:
+        lawd_codes: 특정 법정동코드 리스트 (지정 시 priority 무시하고 우선 사용)
+        priority: 우선순위 필터 (1=최우선, 2=중요, 3=일반, None=전체)
+                 기본값 1 (1순위만 조회하여 API 할당량 보호)
+
+    Returns:
+        List[str]: 법정동코드 리스트
+    """
+    try:
+        # 명시적으로 법정동코드가 지정된 경우 그대로 반환
+        if lawd_codes:
+            logger.info(f"명시적으로 지정된 법정동코드 {len(lawd_codes)}개 사용")
+            return lawd_codes
+
+        query = supabase.table("bjd_code").select("region_cd_5")
+
+        if priority is not None:
+            # priority 이하 모든 우선순위 조회 (1 지정 시 1만, 2 지정 시 1,2 모두)
+            # gte(1)로 1 이상만 조회하고 lte로 상한 제한
+            query = query.gte("priority", 1).lte("priority", priority)
+
+        response = query.execute()
+
+        codes = [row["region_cd_5"] for row in response.data if row.get("region_cd_5")]
+        logger.info(f"법정동코드 {len(codes)}개 조회 완료 (priority<={priority})")
+        return codes
+    except Exception as e:
+        error_msg = f"법정동코드 조회 실패: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        send_slack_error_log(None, e)
+        raise SupabaseException(error_msg) from e
+
+
+async def get_locatadd_nm(lawd_code: str) -> Optional[str]:
+    """
+    법정동코드에 해당하는 법정동명을 조회합니다.
+
+    Args:
+        lawd_code: 법정동코드 (5자리)
+
+    Returns:
+        Optional[str]: 법정동명 (예: "서울특별시 종로구")
+    """
+    try:
+        response = (
+            supabase.table("bjd_code")
+            .select("locatadd_nm")
+            .eq("region_cd_5", lawd_code)
+            .limit(1)
+            .execute()
+        )
+
+        if response.data and len(response.data) > 0:
+            return response.data[0].get("locatadd_nm")
+
+        logger.warning(f"법정동코드 {lawd_code}에 대한 locatadd_nm을 찾을 수 없습니다")
+        return None
+    except Exception as e:
+        logger.error(
+            f"locatadd_nm 조회 실패 (lawd_code={lawd_code}): {str(e)}", exc_info=True
+        )
+        return None
+
+
+async def upsert_apt_sales(records: List[dict]) -> tuple[int, int, int, Optional[str]]:
+    """
+    apt_sales 테이블에 대량 upsert를 수행합니다.
+
+    Args:
+        records: upsert할 레코드 리스트
+
+    Returns:
+        tuple[int, int, int, Optional[str]]: (전체 개수, 신규 개수, 업데이트 개수, 에러 메시지)
+    """
+    if not records:
+        return 0, 0, 0, None
+
+    try:
+        # 1. 기존 데이터 확인 (ID 목록으로 조회)
+        record_ids = [record["id"] for record in records]
+
+        # ID 목록을 100개씩 나누어 조회 (Supabase 제약)
+        existing_ids = set()
+        batch_size = 100
+        for i in range(0, len(record_ids), batch_size):
+            batch_ids = record_ids[i : i + batch_size]
+            response = (
+                supabase.table("apt_sales").select("id").in_("id", batch_ids).execute()
+            )
+            if response.data:
+                existing_ids.update(row["id"] for row in response.data)
+
+        # 2. 신규/업데이트 구분
+        new_count = len([r for r in records if r["id"] not in existing_ids])
+        update_count = len([r for r in records if r["id"] in existing_ids])
+
+        # 3. Upsert 실행
+        response = (
+            supabase.table("apt_sales").upsert(records, on_conflict="id").execute()
+        )
+
+        total = len(response.data) if response.data else 0
+        logger.info(
+            f"apt_sales upsert 완료: 전체 {total}개 "
+            f"(신규 {new_count}개, 업데이트 {update_count}개)"
+        )
+        return total, new_count, update_count, None
+    except Exception as e:
+        error_msg = f"apt_sales upsert 실패: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        send_slack_error_log(None, e)
+        return 0, 0, 0, error_msg

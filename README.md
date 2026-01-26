@@ -113,6 +113,45 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080
 }
 ```
 
+### POST /sync-apt-sales
+
+공공데이터포털 API를 통해 아파트 실거래가 데이터를 수집하고 Supabase에 저장합니다.
+
+**인증**: Bearer 토큰 필요 (`Authorization: Bearer <CRON_SECRET>`)
+
+**요청 본문** (선택사항):
+```json
+{
+  "lawd_codes": ["11110", "11140"],
+  "deal_ym": "202501",
+  "priority": 1
+}
+```
+
+- `lawd_codes`: 법정동코드 리스트 (지정 시 priority 무시)
+- `deal_ym`: 거래연월 YYYYMM 형식 (미지정 시 이번 달과 지난달 자동 수집)
+- `priority`: 우선순위 필터 (1=최우선, 2=중요까지, 3=일반까지) - 기본값 1
+
+**응답**:
+```json
+{
+  "success": true,
+  "total": 1523,
+  "upserted": 1520,
+  "lawd_codes": ["11110", "11140"],
+  "deal_months": ["202412", "202501"],
+  "errors": []
+}
+```
+
+**특징**:
+- **우선순위 기반 수집**: priority 1 (서울 주요 구 10개)만 기본 수집하여 API 할당량 보호
+- **numOfRows=999**: 한 번에 최대 999건 수집 (기본값 10건 방지)
+- MD5 해시 기반 고유 ID로 중복 방지 (아파트명+금액+면적+층+거래일)
+- 법정동코드별 독립적 에러 격리
+- 이번 달과 지난달 자동 수집으로 데이터 누락 방지
+- XML 파싱 및 데이터 정제 (금액 콤마 제거, trim 처리, zfill 날짜 형식)
+
 ## Cloud Run 배포
 
 ### 1. Docker 이미지 빌드
