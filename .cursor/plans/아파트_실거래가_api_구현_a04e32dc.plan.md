@@ -162,14 +162,17 @@ graph TD
     A[POST /sync-apt-sales] --> B[verify_auth]
     B --> C[sync_apt_sales]
     C --> D[get_bjd_codes from Supabase]
-    D --> E[get_target_months]
-    E --> F{각 법정동코드+연월}
+    D --> D1[get_locatadd_nm 캐시 생성]
+    D1 --> E[get_target_months]
+    E --> F{각 법정동코드+연월 병렬 수집}
     F --> G[fetch_apt_sales_data]
     G --> H[XML 파싱]
     H --> I[데이터 정제]
-    I --> J[generate_apt_id MD5]
-    J --> K[upsert_apt_sales]
-    K --> L[Response 성공/실패 집계]
+    I --> J[개별 중복 제거]
+    J --> K[모든 결과 수집]
+    K --> L[전역 중복 제거 ID 기준]
+    L --> M[한 번에 upsert_apt_sales]
+    M --> N[Response 성공/실패 집계]
 ```
 
 ## 핵심 구현 사항
@@ -277,42 +280,3 @@ graph TD
 2. **2단계 (적정)**: 서울시 전체 25개 (50회/월)
 3. **3단계 (주의)**: 수도권 50개 시군구 (100회/월)
 4. **4단계 (위험)**: 전국 250개 시군구 (500회/월)
-
-## 최종 구현 사항 (2026-01-27 업데이트)
-
-### 1. 법정동명(locatadd_nm) 추가
-- **apt_sales 테이블**에 `locatadd_nm VARCHAR(255)` 컬럼 추가
-- **get_locatadd_nm()** 함수로 `bjd_code` 테이블에서 법정동명 조회
-- **법정동명 캐시** 생성으로 반복 DB 조회 방지
-- 각 거래 데이터에 법정동명 자동 포함 (예: "서울특별시 종로구")
-
-### 2. 배치 Upsert 방식으로 전환
-**Before (기존 방식)**:
-- 각 법정동코드/연월마다 즉시 upsert → N번 DB 호출
-
-**After (개선된 방식)**:
-1. 모든 데이터 수집
-2. 전역 중복 제거 (ID 기준)
-3. 한 번에 upsert → 1번 DB 호출
-
-**개선 효과**:
-- ✅ **ON CONFLICT 에러 완전 해결**: 서로 다른 lawd_code에서 동일한 거래가 반환되어도 전역 중복 제거
-- ✅ **성능 향상**: DB 호출 N회 → 1회
-- ✅ **트랜잭션 일관성**: 모든 데이터가 한 번에 저장
-- ✅ **디버깅 용이**: 중복 발생 시 어느 법정동코드 간 중복인지 로그 기록
-
-### 3. 이중 중복 제거 시스템
-1. **1차**: fetch_apt_sales_data() 내부 - 각 법정동코드/연월 내 중복 제거
-2. **2차**: sync_apt_sales() 전역 - 모든 데이터 수집 후 ID 기준 중복 제거
-
-### 4. 고유 ID 생성 개선
-- **Before**: `{apt_name}_{deal_amount}_{area}_{floor}_{deal_date}`
-- **After**: `{lawd_code}_{apt_name}_{deal_amount}_{area}_{floor}_{deal_date}`
-- lawd_code 포함으로 지역별 구분 가능
-
-### 5. Rate Limiting
-- 각 API 호출 전 0.5~2초 랜덤 딜레이
-- 공공데이터 API 초당 호출 제한 회피
-
-### 6. RLS 정책
-- bjd_code, apt_sales 테이블에 public SELECT/INSERT/UPDATE 정책 추가
